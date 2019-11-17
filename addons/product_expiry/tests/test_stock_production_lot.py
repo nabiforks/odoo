@@ -17,18 +17,19 @@ class TestStockProductionLot(TestStockCommon):
         self.productAAA = self.ProductObj.create({
             'name': 'Product AAA',
             'type': 'product',
-            'tracking':'lot'
+            'tracking':'lot',
+            'company_id': self.env.company.id,
         })
 
         # create a new lot with with alert date in the past
         self.lot1_productAAA = self.LotObj.create({
             'name': 'Lot 1 ProductAAA',
             'product_id': self.productAAA.id,
-            'alert_date': fields.Date.to_string(datetime.today() - relativedelta(days=15))
+            'alert_date': fields.Date.to_string(datetime.today() - relativedelta(days=15)),
+            'company_id': self.env.company.id,
         })
 
         picking_in = self.PickingObj.create({
-            'partner_id': self.partner_delta_id,
             'picking_type_id': self.picking_type_in,
             'location_id': self.supplier_location,
             'location_dest_id': self.stock_location
@@ -121,11 +122,11 @@ class TestStockProductionLot(TestStockCommon):
         self.lot1_productBBB = self.LotObj.create({
             'name': 'Lot 1 ProductBBB',
             'product_id': self.productBBB.id,
-            'alert_date': fields.Date.to_string(datetime.today() + relativedelta(days=15))
+            'alert_date': fields.Date.to_string(datetime.today() + relativedelta(days=15)),
+            'company_id': self.env.company.id,
         })
 
         picking_in = self.PickingObj.create({
-            'partner_id': self.partner_delta_id,
             'picking_type_id': self.picking_type_in,
             'location_id': self.supplier_location,
             'location_dest_id': self.stock_location})
@@ -171,10 +172,9 @@ class TestStockProductionLot(TestStockCommon):
         self.productCCC = self.ProductObj.create({'name': 'Product CCC', 'type': 'product', 'tracking':'lot'})
 
         # create a new lot with with alert date in the past
-        self.lot1_productCCC = self.LotObj.create({'name': 'Lot 1 ProductCCC', 'product_id': self.productCCC.id})
+        self.lot1_productCCC = self.LotObj.create({'name': 'Lot 1 ProductCCC', 'product_id': self.productCCC.id, 'company_id': self.env.company.id})
 
         picking_in = self.PickingObj.create({
-            'partner_id': self.partner_delta_id,
             'picking_type_id': self.picking_type_in,
             'location_id': self.supplier_location,
             'location_dest_id': self.stock_location})

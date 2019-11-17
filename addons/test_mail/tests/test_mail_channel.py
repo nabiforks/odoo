@@ -13,7 +13,7 @@ class TestChannelAccessRights(common.BaseFunctionalTest, common.MockEmails):
     @classmethod
     def setUpClass(cls):
         super(TestChannelAccessRights, cls).setUpClass()
-        Channel = cls.env['mail.channel'].with_context(common.BaseFunctionalTest._test_context)
+        Channel = cls.env['mail.channel'].with_context(cls._test_context)
 
         cls.user_public = mail_new_test_user(cls.env, login='bert', groups='base.group_public', name='Bert Tartignole')
         cls.user_portal = mail_new_test_user(cls.env, login='chell', groups='base.group_portal', name='Chell Gladys')
@@ -36,63 +36,66 @@ class TestChannelAccessRights(common.BaseFunctionalTest, common.MockEmails):
     @mute_logger('odoo.addons.base.models.ir_model', 'odoo.models')
     def test_access_rights_public(self):
         # Read public group -> ok
-        self.group_public.sudo(self.user_public).read()
+        self.group_public.with_user(self.user_public).read()
 
         # Read Pigs -> ko, restricted to employees
         # TODO: Change the except_orm to Warning ( Because here it's call check_access_rule
         # which still generate exception in except_orm.So we need to change all
         # except_orm to warning in mail module.)
         with self.assertRaises(except_orm):
-            self.group_pigs.sudo(self.user_public).read()
+            self.group_pigs.with_user(self.user_public).read()
 
         # Read a private group when being a member: ok
         self.group_private.write({'channel_partner_ids': [(4, self.user_public.partner_id.id)]})
-        self.group_private.sudo(self.user_public).read()
+        self.group_private.with_user(self.user_public).read()
 
         # Create group: ko, no access rights
         with self.assertRaises(AccessError):
-            self.env['mail.channel'].sudo(self.user_public).create({'name': 'Test'})
+            self.env['mail.channel'].with_user(self.user_public).create({'name': 'Test'})
 
         # Update group: ko, no access rights
         with self.assertRaises(AccessError):
-            self.group_public.sudo(self.user_public).write({'name': 'Broutouschnouk'})
+            self.group_public.with_user(self.user_public).write({'name': 'Broutouschnouk'})
 
         # Unlink group: ko, no access rights
         with self.assertRaises(AccessError):
-            self.group_public.sudo(self.user_public).unlink()
+            self.group_public.with_user(self.user_public).unlink()
 
     @mute_logger('odoo.addons.base.models.ir_model', 'odoo.models', 'odoo.models.unlink')
     def test_access_rights_groups(self):
         # Employee read employee-based group: ok
         # TODO Change the except_orm to Warning
-        self.group_pigs.sudo(self.user_employee).read()
+        self.group_pigs.with_user(self.user_employee).read()
 
         # Employee can create a group
-        self.env['mail.channel'].sudo(self.user_employee).create({'name': 'Test'})
+        self.env['mail.channel'].with_user(self.user_employee).create({'name': 'Test'})
 
         # Employee update employee-based group: ok
-        self.group_pigs.sudo(self.user_employee).write({'name': 'modified'})
+        self.group_pigs.with_user(self.user_employee).write({'name': 'modified'})
 
         # Employee unlink employee-based group: ok
-        self.group_pigs.sudo(self.user_employee).unlink()
+        self.group_pigs.with_user(self.user_employee).unlink()
 
         # Employee cannot read a private group
         with self.assertRaises(except_orm):
-            self.group_private.sudo(self.user_employee).read()
+            self.group_private.with_user(self.user_employee).read()
 
         # Employee cannot write on private
         with self.assertRaises(AccessError):
-            self.group_private.sudo(self.user_employee).write({'name': 're-modified'})
+            self.group_private.with_user(self.user_employee).write({'name': 're-modified'})
 
     @mute_logger('odoo.addons.base.models.ir_model', 'odoo.models')
     def test_access_rights_followers_ko(self):
+        # self.group_private.name has been put in the cache during the setup as sudo
+        # It must therefore be removed from the cache in other to validate the fact user_portal can't read it.
+        self.group_private.invalidate_cache(['name'])
         with self.assertRaises(AccessError):
-            self.group_private.sudo(self.user_portal).name
+            self.group_private.with_user(self.user_portal).name
 
     def test_access_rights_followers_portal(self):
         # Do: Chell is added into Pigs members and browse it -> ok for messages, ko for partners (no read permission)
         self.group_private.write({'channel_partner_ids': [(4, self.user_portal.partner_id.id)]})
-        chell_pigs = self.group_private.sudo(self.user_portal)
+        chell_pigs = self.group_private.with_user(self.user_portal)
         trigger_read = chell_pigs.name
         for message in chell_pigs.message_ids:
             trigger_read = message.subject
@@ -110,13 +113,13 @@ class TestChannelFeatures(common.BaseFunctionalTest, common.MockEmails):
     @classmethod
     def setUpClass(cls):
         super(TestChannelFeatures, cls).setUpClass()
-        cls.test_channel = cls.env['mail.channel'].with_context(common.BaseFunctionalTest._test_context).create({
+        cls.test_channel = cls.env['mail.channel'].with_context(cls._test_context).create({
             'name': 'Test',
             'description': 'Description',
             'alias_name': 'test',
             'public': 'public',
         })
-        cls.test_partner = cls.env['res.partner'].with_context(common.BaseFunctionalTest._test_context).create({
+        cls.test_partner = cls.env['res.partner'].with_context(cls._test_context).create({
             'name': 'Test Partner',
             'email': 'test@example.com',
         })
@@ -199,14 +202,14 @@ class TestChannelFeatures(common.BaseFunctionalTest, common.MockEmails):
     @mute_logger('odoo.addons.mail.models.mail_mail')
     def test_channel_out_of_office(self):
         self.user_employee.out_of_office_message = 'Out'
-        test_chat = self.env['mail.channel'].with_context(common.BaseFunctionalTest._test_context).create({
+        test_chat = self.env['mail.channel'].with_context(self._test_context).create({
             'channel_partner_ids': [(4, self.user_employee.partner_id.id), (4, self.user_admin.partner_id.id)],
             'public': 'private',
             'channel_type': 'chat',
             'email_send': False,
             'name': 'test'
         })
-        infos = test_chat.sudo(self.user_admin).channel_info()
+        infos = test_chat.with_user(self.user_admin).channel_info()
         self.assertEqual(infos[0]['direct_partner'][0]['out_of_office_message'], 'Out')
 
 
@@ -246,13 +249,13 @@ class TestChannelModeration(common.Moderation):
         self.channel_1.write({'channel_partner_ids': [(4, self.partner_employee_2.id), (4, self.partner_admin.id)]})
         self.channel_1._update_moderation_email([self.partner_admin.email], 'ban')
         self._init_mock_build_email()
-        self.channel_1.sudo(self.user_employee).send_guidelines()
+        self.channel_1.with_user(self.user_employee).send_guidelines()
         self.env['mail.mail'].process_email_queue()
-        self.assertEmails(False, self.partner_employee | self.partner_employee_2, email_from=self.env.company_id.catchall or self.env.company_id.email)
+        self.assertEmails(False, self.partner_employee | self.partner_employee_2, email_from=self.env.company.catchall or self.env.company.email)
 
     def test_send_guidelines_crash(self):
         with self.assertRaises(UserError):
-            self.channel_1.sudo(self.user_employee_2).send_guidelines()
+            self.channel_1.with_user(self.user_employee_2).send_guidelines()
 
     def test_update_moderation_email(self):
         self.channel_1.write({'moderation_ids': [
@@ -308,3 +311,24 @@ class TestChannelModeration(common.Moderation):
         self.assertEqual(accepted_messages, msg_moderator | msg_email2 | msg_notif)
         self.assertFalse(msg_admin.channel_ids)
         self.assertEqual(msg_email2.channel_ids, self.channel_1)
+
+    def test_user_is_moderator(self):
+        self.assertTrue(self.user_employee.is_moderator)
+        self.assertFalse(self.user_admin.is_moderator)
+        self.assertTrue(self.user_employee_2.is_moderator)
+
+    def test_user_moderation_counter(self):
+        self._create_new_message(self.channel_1.id, status='pending_moderation', author=self.partner_admin)
+        self._create_new_message(self.channel_1.id, status='accepted', author=self.partner_admin)
+        self._create_new_message(self.channel_1.id, status='accepted', author=self.partner_employee)
+        self._create_new_message(self.channel_1.id, status='pending_moderation', author=self.partner_employee)
+        self._create_new_message(self.channel_1.id, status='accepted', author=self.partner_employee_2)
+
+        self.assertEqual(self.user_employee.moderation_counter, 2)
+        self.assertEqual(self.user_employee_2.moderation_counter, 0)
+        self.assertEqual(self.user_admin.moderation_counter, 0)
+
+        self.channel_1.write({'channel_partner_ids': [(4, self.partner_employee_2.id)], 'moderator_ids': [(4, self.user_employee_2.id)]})
+        self.assertEqual(self.user_employee.moderation_counter, 2)
+        self.assertEqual(self.user_employee_2.moderation_counter, 0)
+        self.assertEqual(self.user_admin.moderation_counter, 0)

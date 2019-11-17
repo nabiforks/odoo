@@ -65,31 +65,41 @@ class AccountAnalyticDefault(models.Model):
         return res
 
 
-class AccountInvoiceLine(models.Model):
-    _inherit = "account.invoice.line"
+class AccountMoveLine(models.Model):
+    _inherit = 'account.move.line'
+
+    @api.model
+    def default_get(self, fields_list):
+        defaults = super().default_get(fields_list)
+        if {'account_analytic_id', 'analytic_tag_ids'} & set(fields_list):
+            rec = self.env['account.analytic.default'].account_get(
+                product_id=self.product_id.id,
+                partner_id=self.move_id.commercial_partner_id.id,
+                user_id=self.move_id.user_id.id or self.env.uid,
+                date=fields.Date.today(),
+                company_id=self.company_id.id,
+            )
+            if rec:
+                if 'account_analytic_id' in fields_list:
+                    defaults.update({
+                        'account_analytic_id': rec.analytic_id.id,
+                    })
+                if 'analytic_tag_ids' in fields_list:
+                    defaults.update({
+                        'analytic_tag_ids': rec.analytic_tag_ids.ids,
+                    })
+        return defaults
 
     @api.onchange('product_id', 'account_id')
     def _onchange_product_id_account_id(self):
-        rec = self.env['account.analytic.default'].account_get(product_id=self.product_id.id, partner_id=self.invoice_id.commercial_partner_id.id, account_id=self.account_id.id, user_id=self.env.uid, date=self.invoice_id.date_due, company_id=self.invoice_id.company_id.id)
-        self.account_analytic_id = rec.analytic_id.id
-        self.analytic_tag_ids = rec.analytic_tag_ids.ids
-
-    def _set_additional_fields(self):
-        if not self.account_analytic_id or not self.analytic_tag_ids:
-            rec = self.env['account.analytic.default'].account_get(product_id=self.product_id.id, partner_id=self.invoice_id.commercial_partner_id.id, account_id=self.account_id.id, user_id=self.env.uid, date=self.invoice_id.date_due, company_id=self.invoice_id.company_id.id)
-            if rec:
-                if not self.account_analytic_id:
-                    self.account_analytic_id = rec.analytic_id.id
-                if not self.analytic_tag_ids:
-                    self.analytic_tag_ids = rec.analytic_tag_ids.ids
-        super(AccountInvoiceLine, self)._set_additional_fields()
-
-
-class AccountMoveLine(models.Model):
-    _inherit = "account.move.line"
-
-    @api.onchange('account_id', 'partner_id', 'product_id')
-    def _onchange_product_id_account_id_partner_id(self):
-        rec = self.env['account.analytic.default'].account_get(product_id=self.product_id.id, partner_id=self.partner_id.id, account_id=self.account_id.id, user_id=self.env.uid, date=self.move_id.date, company_id=self.company_id.id)
-        self.analytic_account_id = rec.analytic_id.id
-        self.analytic_tag_ids = rec.analytic_tag_ids.ids
+        rec = self.env['account.analytic.default'].account_get(
+            product_id=self.product_id.id,
+            partner_id=self.partner_id.id,
+            account_id=self.account_id.id,
+            user_id=self.env.uid,
+            date=self.date_maturity,
+            company_id=self.move_id.company_id.id
+        )
+        if rec:
+            self.analytic_account_id = rec.analytic_id.id
+            self.analytic_tag_ids = rec.analytic_tag_ids.ids

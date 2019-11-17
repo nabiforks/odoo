@@ -12,16 +12,19 @@ class TestProcurementException(common.TransactionCase):
         product_form = Form(self.env['product.product'])
         product_form.name = 'product with no seller'
         product_form.lst_price = 20.00
-        product_form.standard_price = 15.00
         product_form.categ_id = self.env.ref('product.product_category_1')
         product_with_no_seller = product_form.save()
+
+        std_price_wiz = Form(self.env['stock.change.standard.price'].with_context(active_id=product_with_no_seller.id, active_model='product.product'))
+        std_price_wiz.new_price = 70.0
+        std_price_wiz.save()
 
         # I create a sales order with this product with route dropship.
         so_form = Form(self.env['sale.order'])
         so_form.partner_id = self.env.ref('base.res_partner_2')
         so_form.partner_invoice_id = self.env.ref('base.res_partner_address_3')
         so_form.partner_shipping_id = self.env.ref('base.res_partner_address_3')
-        so_form.payment_term_id = self.env.ref('account.account_payment_term')
+        so_form.payment_term_id = self.env.ref('account.account_payment_term_end_following_month')
         with so_form.order_line.new() as line:
             line.product_id = product_with_no_seller
             line.product_uom_qty = 3

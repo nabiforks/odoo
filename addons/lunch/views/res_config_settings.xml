@@ -3,6 +3,7 @@
     <record id="res_config_settings_view_form" model="ir.ui.view">
         <field name="name">res.config.settings.view.form.inherit.lunch</field>
         <field name="model">res.config.settings</field>
+        <field name="priority" eval="90"/>
         <field name="inherit_id" ref="base.res_config_settings_view_form"/>
         <field name="arch" type="xml">
             <xpath expr="//div[hasclass('settings')]" position="inside">
@@ -14,6 +15,7 @@
                             title="None">
                             <div class="o_setting_right_pane">
                                 <span class="o_form_label">Lunch Overdraft</span>
+                                <span class="fa fa-lg fa-building-o" title="Values set here are company-specific." aria-label="Values set here are company-specific." groups="base.group_multi_company" role="img"/>
                                 <div class="text-muted">
                                     Maximum overdraft that your employees can reach
                                 </div>

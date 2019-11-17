@@ -45,7 +45,8 @@ class TestSaleExpense(TestSale):
             'analytic_account_id': so.analytic_account_id.id,
             'unit_amount': 621.54,
             'employee_id': employee.id,
-            'sheet_id': sheet.id
+            'sheet_id': sheet.id,
+            'sale_order_id': so.id,
         })
         # Approve
         sheet.approve_expense_sheets()
@@ -74,7 +75,8 @@ class TestSaleExpense(TestSale):
             'unit_amount': 0.15,
             'quantity': 100,
             'employee_id': employee.id,
-            'sheet_id': sheet.id
+            'sheet_id': sheet.id,
+            'sale_order_id': so.id,
         })
         # Approve
         sheet.approve_expense_sheets()
@@ -88,6 +90,5 @@ class TestSaleExpense(TestSale):
         # self.assertTrue(so.invoice_status, 'no', 'Sale Expense: expenses should not impact the invoice_status of the so')
 
         # both expenses should be invoiced
-        inv_id = so._create_invoices()
-        inv = self.env['account.invoice'].browse(inv_id)
+        inv = so._create_invoices()
         self.assertEqual(inv.amount_untaxed, 621.54 + (prod_exp_2.list_price * 100.0), 'Sale Expense: invoicing of expense is wrong')

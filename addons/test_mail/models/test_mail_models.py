@@ -145,6 +145,17 @@ class MailModel(models.Model):
 
 class MailCC(models.Model):
     _name = 'mail.test.cc'
+    _description = "Test Email CC Thread"
     _inherit = ['mail.thread.cc']
 
     name = fields.Char()
+
+
+class MailMultiCompany(models.Model):
+    """ This model can be used in multi company tests"""
+    _name = 'mail.test.multi.company'
+    _description = "Test Multi Company Mail"
+    _inherit = 'mail.thread'
+
+    name = fields.Char()
+    company_id = fields.Many2one('res.company')

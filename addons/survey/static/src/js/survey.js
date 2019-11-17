@@ -129,6 +129,15 @@ if(!the_form.length) {
         }
     }
 
+    $('.o_survey_header .breadcrumb-item a').each(function() {
+        var $valObj = $(this);
+        $valObj.click(function(event) {
+            event.preventDefault();
+            $('<input>').attr({type: 'hidden', name: 'breadcrumb_redirect', value: $valObj.attr('href')}).appendTo('.js_surveyform');
+            $('.js_surveyform').submit();
+        });
+    });
+
     // Parameters for form submission
     $('.js_surveyform').ajaxForm({
         url: submit_controller,
@@ -222,6 +231,9 @@ if(!the_form.length) {
                 allowInputToggle: true,
                 keyBinds: null,
             });
+            $('#' + date_field.id).on('error.datetimepicker', function () {
+                return false;
+            });
         });
         // Launch prefilling
         prefill();
@@ -229,5 +241,4 @@ if(!the_form.length) {
             display_scores();
         }
     });
-
 });

@@ -46,7 +46,8 @@ var PREVIEW_MSG_MAX_SIZE = 350;  // optimal for native english speakers
 
 var MailManager =  AbstractService.extend({
     dependencies: ['ajax', 'bus_service', 'local_storage'],
-    _ODOOBOT_ID: "ODOOBOT", // default authorID for transient messages
+    _isReady: false,
+    _ODOOBOT_ID: ["ODOOBOT", "ODOOBOT"], // authorID for transient messages
 
     /**
      * @override
@@ -85,7 +86,7 @@ var MailManager =  AbstractService.extend({
     addMessage: function (data, options) {
         options = options || {};
         var message = this.getMessage(data.id);
-        var prom = Promise.resolve();
+        var prom;
         if (!message) {
             prom = this._addNewMessage(data, options);
         } else {
@@ -94,9 +95,8 @@ var MailManager =  AbstractService.extend({
                     additionalThreadIDs: data.channel_ids
                 });
             }
-            if (options.domain && options.domain !== []) {
-                this._addMessageToThreads(message, options);
-            }
+            this._addMessageToThreads(message, options);
+            prom = Promise.resolve(message);
         }
         return prom;
     },
@@ -258,7 +258,7 @@ var MailManager =  AbstractService.extend({
     /**
      * Get the OdooBot ID, which is the default authorID for transient messages
      *
-     * @returns {string}
+     * @returns {Array<string>}
      */
     getOdoobotID: function () {
         return this._ODOOBOT_ID;
@@ -295,7 +295,7 @@ var MailManager =  AbstractService.extend({
      * This is the case when it has fetched the initial state from the server,
      * by means of the route 'mail/init_messaging'
      *
-     * @returns {Promise}
+     * @returns {boolean}
      */
     isReady: function () {
         return this._isReady;
@@ -428,7 +428,6 @@ var MailManager =  AbstractService.extend({
         return this._rpc({
             model: 'mail.message',
             method: 'unstar_all',
-            args: [[]]
         });
     },
 
@@ -637,7 +636,7 @@ var MailManager =  AbstractService.extend({
      */
     _fetchMailStateFromServer: function () {
         var self = this;
-        this._isReady = session.is_bound.then(function () {
+        session.is_bound.then(function () {
             var context = _.extend(
                 { isMobile: config.device.isMobile },
                 session.user_context
@@ -649,6 +648,8 @@ var MailManager =  AbstractService.extend({
         }).then(function (result) {
             self._updateInternalStateFromServer(result);
             self.call('bus_service', 'startPolling');
+            self._isReady = true;
+            self._mailBus.trigger('messaging_ready');
         });
     },
     /**
@@ -1036,7 +1037,6 @@ var MailManager =  AbstractService.extend({
     _redirectToDocument: function (resModel, resID, viewID) {
         this.do_action({
             type: 'ir.actions.act_window',
-            view_type: 'form',
             view_mode: 'form',
             res_model: resModel,
             views: [[viewID || false, 'form']],
@@ -1260,7 +1260,7 @@ var MailManager =  AbstractService.extend({
     },
     /**
      * Update the mailboxes with mail data fetched from server, namely 'Inbox',
-     * 'Starred', and 'Moderation Queue' if the user is a moderator of a channel
+     * 'Starred', 'History', and 'Moderation Queue' if the user is a moderator of a channel
      *
      * @private
      * @param {Object} data
@@ -1283,6 +1283,10 @@ var MailManager =  AbstractService.extend({
             id: 'starred',
             name: _t("Starred"),
             mailboxCounter: data.starred_counter || 0,
+        });
+        this._addMailbox({
+            id: 'history',
+            name: _t("History"),
         });
 
         if (data.is_moderator) {

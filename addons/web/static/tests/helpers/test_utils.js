@@ -102,7 +102,9 @@ async function nextTick() {
 // to load xml files that are normally lazy loaded by specific widgets).
 return Promise.all([
     session.is_bound,
-    ajax.loadXML('/web/static/src/xml/dialog.xml', core.qweb)
+    ajax.loadXML('/web/static/src/xml/debug.xml', core.qweb),
+    ajax.loadXML('/web/static/src/xml/dialog.xml', core.qweb),
+    ajax.loadXML('/web/static/src/xml/translation_dialog.xml', core.qweb),
 ]).then(function () {
     setTimeout(function () {
         // jquery autocomplete refines the search in a setTimeout() parameterized
@@ -134,6 +136,7 @@ return Promise.all([
             clickFirst: testUtilsDom.clickFirst,
             clickLast: testUtilsDom.clickLast,
             triggerEvents: testUtilsDom.triggerEvents,
+            triggerEvent: testUtilsDom.triggerEvent,
         },
         form: {
             clickEdit: testUtilsForm.clickEdit,
@@ -178,6 +181,7 @@ return Promise.all([
             createFile: testUtilsFile.createFile,
             dragoverFile: testUtilsFile.dragoverFile,
             dropFile: testUtilsFile.dropFile,
+            dropFiles: testUtilsFile.dropFiles,
         },
 
         createActionManager: testUtilsCreate.createActionManager,

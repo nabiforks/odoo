@@ -5,6 +5,7 @@ import io
 import logging
 import os.path
 import re
+import subprocess
 import sys
 import time
 
@@ -13,6 +14,10 @@ from dateutil.relativedelta import relativedelta
 
 import pytz
 from lxml import etree, builder
+try:
+    import jingtrang
+except ImportError:
+    jingtrang = None
 
 import odoo
 from . import assertion_report, pycompat
@@ -177,15 +182,18 @@ def _eval_xml(self, node, env):
                 return tuple(res)
             return res
     elif node.tag == "function":
-        model = env[node.get('model')]
+        model_str = node.get('model')
+        model = env[model_str]
         method_name = node.get('name')
         # determine arguments
         args = []
         kwargs = {}
         a_eval = node.get('eval')
+
         if a_eval:
-            self.idref['ref'] = self.id_get
-            args = list(safe_eval(a_eval, self.idref))
+            idref2 = _get_idref(self, env, model_str, self.idref)
+            args = safe_eval(a_eval, idref2)
+            args = list(safe_eval(a_eval, idref2))
         for child in node:
             if child.tag == 'value' and child.get('name'):
                 kwargs[child.get('name')] = _eval_xml(self, child, env)
@@ -334,7 +342,6 @@ form: module.record_id""" % (xml_id,)
         domain = rec.get('domain') or '[]'
         res_model = rec.get('res_model')
         binding_model = rec.get('binding_model')
-        view_type = rec.get('view_type') or 'form'
         view_mode = rec.get('view_mode') or 'tree,form'
         usage = rec.get('usage')
         limit = rec.get('limit')
@@ -363,7 +370,6 @@ form: module.record_id""" % (xml_id,)
             'domain': domain,
             'res_model': res_model,
             'src_model': binding_model,
-            'view_type': view_type,
             'view_mode': view_mode,
             'usage': usage,
             'limit': limit,
@@ -390,7 +396,6 @@ form: module.record_id""" % (xml_id,)
             'domain': domain,
             'context': context,
             'res_model': res_model,
-            'view_type': view_type,
             'view_mode': view_mode,
             'usage': usage,
             'limit': limit,
@@ -558,11 +563,14 @@ form: module.record_id""" % (xml_id,)
             else:
                 f_val = _eval_xml(self, field, env)
                 if f_name in model._fields:
-                    if model._fields[f_name].type == 'integer':
+                    field_type = model._fields[f_name].type
+                    if field_type == 'many2one':
+                        f_val = int(f_val) if f_val else False
+                    elif field_type == 'integer':
                         f_val = int(f_val)
-                    elif model._fields[f_name].type in ['float', 'monetary']:
+                    elif field_type in ('float', 'monetary'):
                         f_val = float(f_val)
-                    elif model._fields[f_name].type == 'boolean' and isinstance(f_val, str):
+                    elif field_type == 'boolean' and isinstance(f_val, str):
                         f_val = str2bool(f_val)
             res[f_name] = f_val
 
@@ -608,6 +616,8 @@ form: module.record_id""" % (xml_id,)
         record.append(Field(name, name='name'))
         record.append(Field(full_tpl_id, name='key'))
         record.append(Field("qweb", name='type'))
+        if 'track' in el.attrib:
+            record.append(Field(el.get('track'), name='track'))
         if 'priority' in el.attrib:
             record.append(Field(el.get('priority'), name='priority'))
         if 'inherit_id' in el.attrib:
@@ -771,13 +781,19 @@ def convert_csv_import(cr, module, fname, csvcontent, idref=None, mode='init',
 
 def convert_xml_import(cr, module, xmlfile, idref=None, mode='init', noupdate=False, report=None):
     doc = etree.parse(xmlfile)
-    relaxng = etree.RelaxNG(
-        etree.parse(os.path.join(config['root_path'],'import_xml.rng' )))
+    schema = os.path.join(config['root_path'], 'import_xml.rng')
+    relaxng = etree.RelaxNG(etree.parse(schema))
     try:
         relaxng.assert_(doc)
     except Exception:
-        _logger.info("The XML file '%s' does not fit the required schema !", xmlfile.name, exc_info=True)
-        _logger.info(ustr(relaxng.error_log.last_error))
+        _logger.exception("The XML file '%s' does not fit the required schema !", xmlfile.name)
+        if jingtrang:
+            p = subprocess.run(['pyjing', schema, xmlfile.name], stdout=subprocess.PIPE)
+            _logger.warn(p.stdout.decode())
+        else:
+            for e in relaxng.error_log:
+                _logger.warn(e)
+            _logger.info("Install 'jingtrang' for more precise and useful validation messages.")
         raise
 
     if isinstance(xmlfile, str):

@@ -1,32 +1,17 @@
 # -*- coding: utf-8 -*-
 
 from email.utils import formataddr
+from unittest.mock import patch
 
 from odoo.addons.test_mail.tests import common
 
 
 class TestTracking(common.BaseFunctionalTest, common.MockEmails):
 
-    def assertTracking(self, message, data):
-        tracking_values = message.sudo().tracking_value_ids
-        for field_name, value_type, old_value, new_value in data:
-            tracking = tracking_values.filtered(lambda track: track.field == field_name)
-            self.assertEqual(len(tracking), 1)
-            if value_type in ('char', 'integer'):
-                self.assertEqual(tracking.old_value_char, old_value)
-                self.assertEqual(tracking.new_value_char, new_value)
-            elif value_type in ('many2one'):
-                self.assertEqual(tracking.old_value_integer, old_value and old_value.id or False)
-                self.assertEqual(tracking.new_value_integer, new_value and new_value.id or False)
-                self.assertEqual(tracking.old_value_char, old_value and old_value.display_name or '')
-                self.assertEqual(tracking.new_value_char, new_value and new_value.display_name or '')
-            else:
-                self.assertEqual(1, 0)
-
     def setUp(self):
         super(TestTracking, self).setUp()
 
-        record = self.env['mail.test.full'].sudo(self.user_employee).with_context(common.BaseFunctionalTest._test_context).create({
+        record = self.env['mail.test.full'].with_user(self.user_employee).with_context(self._test_context).create({
             'name': 'Test',
         })
         self.record = record.with_context(mail_notrack=False)
@@ -53,7 +38,7 @@ class TestTracking(common.BaseFunctionalTest, common.MockEmails):
 
         # no specific recipients except those following notes, no email
         self.assertEqual(self.record.message_ids.partner_ids, self.env['res.partner'])
-        self.assertEqual(self.record.message_ids.needaction_partner_ids, self.env['res.partner'])
+        self.assertEqual(self.record.message_ids.notified_partner_ids, self.env['res.partner'])
         self.assertEqual(self._mails, [])
 
         # verify tracked value
@@ -81,7 +66,7 @@ class TestTracking(common.BaseFunctionalTest, common.MockEmails):
 
         # no specific recipients except those following umbrella
         self.assertEqual(self.record.message_ids.partner_ids, self.env['res.partner'])
-        self.assertEqual(self.record.message_ids.needaction_partner_ids, self.user_admin.partner_id)
+        self.assertEqual(self.record.message_ids.notified_partner_ids, self.user_admin.partner_id)
 
         # verify tracked value
         self.assertTracking(
@@ -120,7 +105,7 @@ class TestTracking(common.BaseFunctionalTest, common.MockEmails):
     def test_message_track_template_at_create(self):
         """ Create a record with tracking template on create, template should be sent."""
 
-        Model = self.env['mail.test.full'].sudo(self.user_employee).with_context(common.BaseFunctionalTest._test_context)
+        Model = self.env['mail.test.full'].with_user(self.user_employee).with_context(self._test_context)
         Model = Model.with_context(mail_notrack=False)
         record = Model.create({
             'name': 'Test',
@@ -151,22 +136,30 @@ class TestTracking(common.BaseFunctionalTest, common.MockEmails):
         self.assertEqual(tracking_values[2].tracking_sequence, 100)
 
     def test_track_groups(self):
-        self.record._fields['email_from'].groups = 'base.group_erp_manager' # patch the group attribute
+        # patch the group attribute
+        field = self.record._fields['email_from']
+        self.addCleanup(setattr, field, 'groups', field.groups)
+        field.groups = 'base.group_erp_manager'
+
         self.record.sudo().write({'email_from': 'X'})
 
         msg_emp = self.record.message_ids.message_format()
-        msg_admin = self.record.message_ids.sudo(self.user_admin).message_format()
+        msg_sudo = self.record.sudo().message_ids.message_format()
         self.assertFalse(msg_emp[0].get('tracking_value_ids'), "should not have protected tracking values")
-        self.assertTrue(msg_admin[0].get('tracking_value_ids'), "should have protected tracking values")
+        self.assertTrue(msg_sudo[0].get('tracking_value_ids'), "should have protected tracking values")
 
     def test_notify_track_groups(self):
-        self.record._fields['email_from'].groups = 'base.group_erp_manager' # patch the group attribute
+        # patch the group attribute
+        field = self.record._fields['email_from']
+        self.addCleanup(setattr, field, 'groups', field.groups)
+        field.groups = 'base.group_erp_manager'
+
         self.record.sudo().write({'email_from': 'X'})
 
-        msg_emp = self.partner_employee.sudo(self.user_employee)._notify_prepare_template_context(self.record.message_ids, self.record)
-        msg_admin = self.partner_admin.sudo(self.user_admin)._notify_prepare_template_context(self.record.message_ids, self.record)
+        msg_emp = self.record._notify_prepare_template_context(self.record.message_ids, {})
+        msg_sudo = self.record.sudo()._notify_prepare_template_context(self.record.message_ids, {})
         self.assertFalse(msg_emp.get('tracking_values'), "should not have protected tracking values")
-        self.assertTrue(msg_admin.get('tracking_values'), "should have protected tracking values")
+        self.assertTrue(msg_sudo.get('tracking_values'), "should have protected tracking values")
 
     def test_unlinked_field(self):
         record_sudo = self.record.sudo()
@@ -177,3 +170,37 @@ class TestTracking(common.BaseFunctionalTest, common.MockEmails):
             ('name', '=', 'email_from')])
         ir_model_field.with_context(_force_unlink=True).unlink()
         self.assertEqual(len(record_sudo.message_ids.tracking_value_ids), 0)
+
+    def test_create_partner_from_tracking_multicompany(self):
+        company1 = self.env['res.company'].create({'name': 'company1'})
+        self.env.user.write({'company_ids': [(4, company1.id, False)]})
+        self.assertNotEqual(self.env.company, company1)
+
+        email_new_partner = "diamonds@rust.com"
+        Partner = self.env['res.partner']
+        self.assertFalse(Partner.search([('email', '=', email_new_partner)]))
+
+        template = self.env['mail.template'].create({
+            'model_id': self.env['ir.model']._get('mail.test.track').id,
+            'name': 'AutoTemplate',
+            'subject': 'autoresponse',
+            'email_from': self.env.user.email_formatted,
+            'email_to': "${object.email_from}",
+            'body_html': "<div>A nice body</div>",
+        })
+
+        def patched_message_track_post_template(*args, **kwargs):
+            if args[0]._name == "mail.test.track":
+                args[0].message_post_with_template(template.id)
+            return True
+
+        with patch('odoo.addons.mail.models.mail_thread.MailThread._message_track_post_template', patched_message_track_post_template):
+            self.env['mail.test.track'].create({
+                'email_from': email_new_partner,
+                'company_id': company1.id,
+                'user_id': self.env.user.id, # trigger track template
+            })
+
+        new_partner = Partner.search([('email', '=', email_new_partner)])
+        self.assertTrue(new_partner)
+        self.assertEqual(new_partner.company_id, company1)

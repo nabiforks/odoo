@@ -83,11 +83,11 @@ class TestAccountEntry(TestExpenseCommon):
             multi-currency. And taxes. """
 
         # Clean-up the rates
-        self.cr.execute("UPDATE res_company SET currency_id = %s WHERE id = %s", [self.env.ref('base.USD').id, self.env.company_id.id])
+        self.cr.execute("UPDATE res_company SET currency_id = %s WHERE id = %s", [self.env.ref('base.USD').id, self.env.company.id])
         self.env['res.currency.rate'].search([]).unlink()
         self.env['res.currency.rate'].create({
             'currency_id': self.env.ref('base.EUR').id,
-            'company_id': self.env.company_id.id,
+            'company_id': self.env.company.id,
             'rate': 2.0,
             'name': '2010-01-01',
         })
@@ -142,7 +142,7 @@ class TestAccountEntry(TestExpenseCommon):
         self.assertEquals(self.analytic_account.line_ids, expense.account_move_id.mapped('line_ids.analytic_line_ids'))
         self.assertEquals(len(self.analytic_account.line_ids), 1, "Analytic Account should have only one line")
         self.assertAlmostEquals(self.analytic_account.line_ids[0].amount, -318.18, "Amount on the only AAL is wrong")
-        self.assertAlmostEquals(self.analytic_account.line_ids[0].currency_id, self.env.company_id.currency_id, "Currency on the only AAL is wrong")
+        self.assertAlmostEquals(self.analytic_account.line_ids[0].currency_id, self.env.company.currency_id, "Currency on the only AAL is wrong")
         self.assertEquals(self.analytic_account.line_ids[0].product_id, self.product_expense, "Product of AAL should be the one from the expense")
 
     def test_expense_from_email(self):
@@ -187,6 +187,72 @@ class TestAccountEntry(TestExpenseCommon):
         self.assertEquals(expense.total_amount, 9876.0)
         self.assertTrue(expense.employee_id in user_demo.employee_ids)
 
+    def test_partial_payment_multiexpense(self):
+        bank_journal = self.env['account.journal'].create({
+            'name': 'Payment Journal',
+            'code': 'PAY',
+            'type': 'bank',
+            'company_id': self.env.company.id,
+        })
+
+        outbound_pay_method = self.env['account.payment.method'].create({
+            'name': 'outbound',
+            'code': 'out',
+            'payment_type': 'outbound',
+        })
+
+        expense = self.env['hr.expense.sheet'].create({
+            'name': 'Expense for John Smith',
+            'employee_id': self.employee.id,
+        })
+        expense_line = self.env['hr.expense'].create({
+            'name': 'Car Travel Expenses',
+            'employee_id': self.employee.id,
+            'product_id': self.product_expense.id,
+            'unit_amount': 200.00,
+            'tax_ids': [(6, 0, [self.tax.id])],
+            'sheet_id': expense.id,
+            'analytic_account_id': self.analytic_account.id,
+        })
+        expense_line.copy({
+            'sheet_id': expense.id
+        })
+        expense.approve_expense_sheets()
+        expense.action_sheet_move_create()
+
+        exp_move_lines = expense.account_move_id.line_ids
+        payable_move_lines = exp_move_lines.filtered(lambda l: l.account_id.internal_type == 'payable')
+        self.assertEquals(len(payable_move_lines), 2)
+
+        WizardRegister = self.env["hr.expense.sheet.register.payment.wizard"].with_context(
+            active_model=expense._name, active_id=expense.id, active_ids=expense.ids
+        )
+
+        register_pay1 = WizardRegister.create({
+            'journal_id': bank_journal.id,
+            'payment_method_id': outbound_pay_method.id,
+            'amount': 300,
+        })
+        register_pay1.expense_post_payment()
+
+        exp_move_lines = expense.account_move_id.line_ids
+        payable_move_lines = exp_move_lines.filtered(lambda l: l.account_id.internal_type == 'payable')
+        self.assertEquals(len(payable_move_lines.filtered(lambda l: l.reconciled)), 1)
+
+        register_pay2 = WizardRegister.create({
+            'journal_id': bank_journal.id,
+            'payment_method_id': outbound_pay_method.id,
+            'amount': 100,
+        })
+        register_pay2.expense_post_payment()
+        exp_move_lines = expense.account_move_id.line_ids
+        payable_move_lines = exp_move_lines.filtered(lambda l: l.account_id.internal_type == 'payable')
+        self.assertEquals(len(payable_move_lines.filtered(lambda l: l.reconciled)), 2)
+
+        full_reconcile = payable_move_lines.mapped('full_reconcile_id')
+        self.assertEquals(len(full_reconcile), 1)
+
+
 class TestExpenseRights(TestExpenseCommon):
 
     @classmethod
@@ -195,7 +261,7 @@ class TestExpenseRights(TestExpenseCommon):
 
     def test_expense_create(self):
         # Employee should be able to create an Expense
-        self.env['hr.expense'].sudo(self.user_employee.id).create({
+        self.env['hr.expense'].with_user(self.user_employee).create({
             'name': 'Batmobile repair',
             'employee_id': self.employee.id,
             'product_id': self.product_1.id,
@@ -205,7 +271,7 @@ class TestExpenseRights(TestExpenseCommon):
 
         # Employee should not be able to create an Expense for someone else
         with self.assertRaises(AccessError):
-            self.env['hr.expense'].sudo(self.user_employee.id).create({
+            self.env['hr.expense'].with_user(self.user_employee).create({
                 'name': 'Superboy costume washing',
                 'employee_id': self.emp_emp2.id,
                 'product_id': self.product_2.id,
@@ -231,19 +297,19 @@ class TestExpenseRights(TestExpenseCommon):
 
         # Employee should not be able to approve expense sheet
         with self.assertRaises(UserError):
-            sheet.sudo(self.user_officer).approve_expense_sheets()
+            sheet.with_user(self.user_officer).approve_expense_sheets()
         # Officer should not be able to approve own expense sheet
         with self.assertRaises(UserError):
-            sheet.sudo(self.user_officer).approve_expense_sheets()
-        sheet.sudo(self.user_manager).approve_expense_sheets()
+            sheet.with_user(self.user_officer).approve_expense_sheets()
+        sheet.with_user(self.user_manager).approve_expense_sheets()
 
         # Officer should be able to approve expense from his department
-        sheet_2.sudo(self.user_officer).approve_expense_sheets()
+        sheet_2.with_user(self.user_officer).approve_expense_sheets()
 
         # Officer should not be able to approve expense sheet from another department
         with self.assertRaises(AccessError):
-            sheet_3.sudo(self.user_officer).approve_expense_sheets()
-        sheet_3.sudo(self.user_manager).approve_expense_sheets()
+            sheet_3.with_user(self.user_officer).approve_expense_sheets()
+        sheet_3.with_user(self.user_manager).approve_expense_sheets()
 
     def test_expense_refuse(self):
         sheet = self.env['hr.expense.sheet'].create({
@@ -261,22 +327,22 @@ class TestExpenseRights(TestExpenseCommon):
             'employee_id': self.emp_emp2.id,
         })
 
-        sheet.sudo(self.user_manager).approve_expense_sheets()
-        sheet_2.sudo(self.user_manager).approve_expense_sheets()
-        sheet_3.sudo(self.user_manager).approve_expense_sheets()
+        sheet.with_user(self.user_manager).approve_expense_sheets()
+        sheet_2.with_user(self.user_manager).approve_expense_sheets()
+        sheet_3.with_user(self.user_manager).approve_expense_sheets()
 
         # Employee should not be able to refuse expense sheet
         with self.assertRaises(UserError):
-            sheet.sudo(self.user_employee).refuse_sheet('')
+            sheet.with_user(self.user_employee).refuse_sheet('')
         # Officer should not be able to refuse own expense sheet
         with self.assertRaises(UserError):
-            sheet.sudo(self.user_officer).refuse_sheet('')
-        sheet.sudo(self.user_manager).refuse_sheet('')
+            sheet.with_user(self.user_officer).refuse_sheet('')
+        sheet.with_user(self.user_manager).refuse_sheet('')
 
         # Officer should be able to refuse expense from his department
-        sheet_2.sudo(self.user_officer).refuse_sheet('')
+        sheet_2.with_user(self.user_officer).refuse_sheet('')
 
         # Officer should not be able to refuse expense sheet from another department
         with self.assertRaises(AccessError):
-            sheet_3.sudo(self.user_officer).refuse_sheet('')
-        sheet_3.sudo(self.user_manager).refuse_sheet('')
+            sheet_3.with_user(self.user_officer).refuse_sheet('')
+        sheet_3.with_user(self.user_manager).refuse_sheet('')

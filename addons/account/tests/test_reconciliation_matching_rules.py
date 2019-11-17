@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from odoo import fields
 from odoo.addons.account.tests.account_test_classes import AccountingTestCase
 from odoo.tests.common import Form
 from odoo.tests import tagged
@@ -8,26 +9,23 @@ from odoo.tests import tagged
 class TestReconciliationMatchingRules(AccountingTestCase):
     def _create_invoice_line(self, amount, partner, type):
         ''' Create an invoice on the fly.'''
-        self_ctx = self.env['account.invoice'].with_context(type=type)
-        journal_id = self_ctx._default_journal().id
-        self_ctx = self_ctx.with_context(journal_id=journal_id)
-        view = type in ('in_invoice', 'in_refund') and 'account.invoice_supplier_form' or 'account.invoice_form'
-        with Form(self_ctx, view=view) as invoice_form:
-            invoice_form.partner_id = partner
-            with invoice_form.invoice_line_ids.new() as invoice_line_form:
-                invoice_line_form.name = 'xxxx'
-                invoice_line_form.quantity = 1
-                invoice_line_form.price_unit = amount
-                invoice_line_form.invoice_line_tax_ids.clear()
+        invoice_form = Form(self.env['account.move'].with_context(default_type=type))
+        invoice_form.invoice_date = fields.Date.from_string('2019-09-01')
+        invoice_form.partner_id = partner
+        with invoice_form.invoice_line_ids.new() as invoice_line_form:
+            invoice_line_form.name = 'xxxx'
+            invoice_line_form.quantity = 1
+            invoice_line_form.price_unit = amount
+            invoice_line_form.tax_ids.clear()
         invoice = invoice_form.save()
-        invoice.action_invoice_open()
-        lines = invoice.move_id.line_ids
-        return lines.filtered(lambda l: l.account_id == invoice.account_id)
+        invoice.post()
+        lines = invoice.line_ids
+        return lines.filtered(lambda l: l.account_id.user_type_id.type in ('receivable', 'payable'))
 
     def _check_statement_matching(self, rules, expected_values, statements=None):
         if statements is None:
             statements = self.bank_st + self.cash_st
-        statement_lines = statements.mapped('line_ids')
+        statement_lines = statements.mapped('line_ids').sorted()
         matching_values = rules._apply_rules(statement_lines)
         for st_line_id, values in matching_values.items():
             values.pop('reconciled_lines', None)
@@ -51,7 +49,7 @@ class TestReconciliationMatchingRules(AccountingTestCase):
         current_assets_account = self.env['account.account'].search(
             [('user_type_id', '=', self.env.ref('account.data_account_type_current_assets').id)], limit=1)
 
-        self.rule_0 = self.env.ref('account.reconciliation_model_default_rule')
+        self.rule_0 = self.env['account.reconcile.model'].search([('company_id', '=', self.env.company.id), ('rule_type', '=', 'invoice_matching')])
         self.rule_1 = self.rule_0.copy()
         self.rule_1.account_id = current_assets_account
         self.rule_1.match_partner = True
@@ -60,7 +58,7 @@ class TestReconciliationMatchingRules(AccountingTestCase):
             'name': 'write-off model',
             'rule_type': 'writeoff_suggestion',
             'match_partner': True,
-            'match_partner_ids': [6, 0, (self.partner_1 + self.partner_2).ids],
+            'match_partner_ids': [],
             'account_id': current_assets_account.id,
         })
 
@@ -98,6 +96,12 @@ class TestReconciliationMatchingRules(AccountingTestCase):
             'sequence': 1,
         })
 
+        self.tax21 = self.env['account.tax'].create({
+            'name': '21%',
+            'type_tax_use': 'purchase',
+            'amount': 21,
+        })
+
     def test_matching_fields(self):
         ''' Test all fields used to restrict the rules's applicability.'''
 
@@ -107,6 +111,7 @@ class TestReconciliationMatchingRules(AccountingTestCase):
             self.bank_line_2.id: {'aml_ids': [
                 self.invoice_line_2.id,
                 self.invoice_line_3.id,
+                self.invoice_line_1.id,
             ], 'model': self.rule_1},
             self.cash_line_1.id: {'aml_ids': [self.invoice_line_4.id], 'model': self.rule_1},
         })
@@ -127,6 +132,7 @@ class TestReconciliationMatchingRules(AccountingTestCase):
             self.bank_line_2.id: {'aml_ids': [
                 self.invoice_line_2.id,
                 self.invoice_line_3.id,
+                self.invoice_line_1.id,
             ], 'model': self.rule_1},
             self.cash_line_1.id: {'aml_ids': []},
         })
@@ -207,6 +213,7 @@ class TestReconciliationMatchingRules(AccountingTestCase):
             self.bank_line_2.id: {'aml_ids': [
                 self.invoice_line_2.id,
                 self.invoice_line_3.id,
+                self.invoice_line_1.id,
             ], 'model': self.rule_1},
             self.cash_line_1.id: {'aml_ids': [self.invoice_line_4.id], 'model': self.rule_1},
         })
@@ -221,6 +228,7 @@ class TestReconciliationMatchingRules(AccountingTestCase):
             self.bank_line_2.id: {'aml_ids': [
                 self.invoice_line_2.id,
                 self.invoice_line_3.id,
+                self.invoice_line_1.id,
             ], 'model': self.rule_1},
             self.cash_line_1.id: {'aml_ids': [self.invoice_line_4.id], 'model': self.rule_1},
         })
@@ -250,6 +258,7 @@ class TestReconciliationMatchingRules(AccountingTestCase):
             self.bank_line_2.id: {'aml_ids': [
                 self.invoice_line_2.id,
                 self.invoice_line_3.id,
+                self.invoice_line_1.id,
             ], 'model': self.rule_1},
             self.cash_line_1.id: {'aml_ids': [self.invoice_line_4.id], 'model': self.rule_1},
         })
@@ -293,15 +302,43 @@ class TestReconciliationMatchingRules(AccountingTestCase):
 
         # Check first line has been well reconciled.
         self.assertRecordValues(self.bank_line_1.journal_entry_ids, [
-            {'partner_id': self.partner_1.id, 'debit': 105.0, 'credit': 0.0},
-            {'partner_id': self.partner_1.id, 'debit': 0.0, 'credit': 100.0},
             {'partner_id': self.partner_1.id, 'debit': 0.0, 'credit': 5.0},
+            {'partner_id': self.partner_1.id, 'debit': 0.0, 'credit': 100.0},
+            {'partner_id': self.partner_1.id, 'debit': 105.0, 'credit': 0.0},
         ])
 
         # Check second line has been well reconciled.
         self.assertRecordValues(self.cash_line_1.journal_entry_ids, [
-            {'partner_id': self.partner_2.id, 'debit': 0.0, 'credit': 1000.0},
             {'partner_id': self.partner_2.id, 'debit': 1000.0, 'credit': 0.0},
+            {'partner_id': self.partner_2.id, 'debit': 0.0, 'credit': 1000.0},
+        ])
+
+    def test_auto_reconcile_with_tax(self):
+        ''' Test auto reconciliation with a tax amount included in the bank statement line'''
+
+        self.rule_1.write({
+            'auto_reconcile': True,
+            'force_tax_included': True,
+            'tax_ids': [(6, 0, self.tax21.ids)],
+            'rule_type': 'writeoff_suggestion',
+        })
+
+        self.bank_line_2.unlink()
+        self.bank_line_1.amount = -121
+
+        self._check_statement_matching(
+            self.rule_1,
+            {
+                self.bank_line_1.id: {'aml_ids': [], 'model': self.rule_1, 'status': 'reconciled'},
+            },
+            self.bank_st
+        )
+
+        # Check first line has been well reconciled.
+        self.assertRecordValues(self.bank_line_1.journal_entry_ids, [
+            {'partner_id': self.partner_1.id, 'debit': 100.0, 'credit': 0.0, 'tax_ids': [self.tax21.id], 'tax_line_id': False},
+            {'partner_id': self.partner_1.id, 'debit': 21.0, 'credit': 0.0, 'tax_ids': [], 'tax_line_id': self.tax21.id},
+            {'partner_id': self.partner_1.id, 'debit': 0.0, 'credit': 121.0, 'tax_ids': [], 'tax_line_id': False},
         ])
 
     def test_reverted_move_matching(self):
@@ -329,7 +366,7 @@ class TestReconciliationMatchingRules(AccountingTestCase):
         })
 
         move.post()
-        move_reversed = AccountMove.browse(move.reverse_moves())
+        move_reversed = move._reverse_moves()
         self.assertTrue(move_reversed.exists())
 
         bank_st = self.env['account.bank.statement'].create({

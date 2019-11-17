@@ -66,10 +66,10 @@ var ShowPaymentLineWidget = AbstractField.extend({
                         currency: content.currency,
                         position: content.position,
                         payment_id: content.payment_id,
+                        payment_method_name: content.payment_method_name,
                         move_id: content.move_id,
                         ref: content.ref,
                         account_payment_id: content.account_payment_id,
-                        invoice_id: content.invoice_id,
                     }));
                     $content.filter('.js_unreconcile_payment').on('click', self._onRemoveMoveReconcile.bind(self));
                     $content.filter('.js_open_payment').on('click', self._onOpenPayment.bind(self));
@@ -96,15 +96,11 @@ var ShowPaymentLineWidget = AbstractField.extend({
      * @param {MouseEvent} event
      */
     _onOpenPayment: function (event) {
-        var invoiceId = parseInt($(event.target).attr('invoice-id'));
         var paymentId = parseInt($(event.target).attr('payment-id'));
         var moveId = parseInt($(event.target).attr('move-id'));
         var res_model;
         var id;
-        if (invoiceId !== undefined && !isNaN(invoiceId)){
-            res_model = "account.invoice";
-            id = invoiceId;
-        } else if (paymentId !== undefined && !isNaN(paymentId)){
+        if (paymentId !== undefined && !isNaN(paymentId)){
             res_model = "account.payment";
             id = paymentId;
         } else if (moveId !== undefined && !isNaN(moveId)){
@@ -133,9 +129,9 @@ var ShowPaymentLineWidget = AbstractField.extend({
         var self = this;
         var id = $(event.target).data('id') || false;
         this._rpc({
-                model: 'account.invoice',
-                method: 'assign_outstanding_credit',
-                args: [JSON.parse(this.value).invoice_id, id],
+                model: 'account.move',
+                method: 'js_assign_outstanding_line',
+                args: [JSON.parse(this.value).move_id, id],
             }).then(function () {
                 self.trigger_up('reload');
             });
@@ -153,7 +149,7 @@ var ShowPaymentLineWidget = AbstractField.extend({
                 model: 'account.move.line',
                 method: 'remove_move_reconcile',
                 args: [paymentId],
-                context: {'invoice_id': this.res_id},
+                context: {'move_id': this.res_id},
             }).then(function () {
                 self.trigger_up('reload');
             });

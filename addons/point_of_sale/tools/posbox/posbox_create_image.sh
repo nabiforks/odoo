@@ -29,7 +29,7 @@ __base="$(basename ${__file} .sh)"
 MOUNT_POINT="${__dir}/root_mount"
 OVERWRITE_FILES_BEFORE_INIT_DIR="${__dir}/overwrite_before_init"
 OVERWRITE_FILES_AFTER_INIT_DIR="${__dir}/overwrite_after_init"
-VERSION=12.0
+VERSION=13.0
 REPO=https://github.com/odoo/odoo.git
 
 if [ ! -f kernel-qemu ] || ! file_exists *raspbian*.img ; then
@@ -120,7 +120,7 @@ qemu-system-arm "${QEMU_OPTS[@]}"
 mount "${LOOP_MAPPER_PATH}" "${MOUNT_POINT}"
 cp -av "${OVERWRITE_FILES_AFTER_INIT_DIR}"/* "${MOUNT_POINT}"
 
-find "${MOUNT_POINT}"/usr -type f -name "*.iotpatch"|while read iotpatch; do
+find "${MOUNT_POINT}"/ -type f -name "*.iotpatch"|while read iotpatch; do
     DIR=$(dirname "${iotpatch}")
     BASE=$(basename "${iotpatch%.iotpatch}")
     find "${DIR}" -type f -name "${BASE}" ! -name "*.iotpatch"|while read file; do

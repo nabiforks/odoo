@@ -12,7 +12,7 @@ __base="$(basename ${__file} .sh)"
 # leading to mismatch between kernel image and modules.
 mount /dev/sda1 /boot
 
-# Recommends: antiword, graphviz, ghostscript, postgresql, python-gevent, poppler-utils
+# Recommends: antiword, graphviz, ghostscript, python-gevent, poppler-utils
 export DEBIAN_FRONTEND=noninteractive
 echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 
@@ -25,6 +25,8 @@ PKGS_TO_INSTALL="
     fswebcam \
     nginx-full \
     dnsmasq \
+    dbus \
+    dbus-x11 \
     cups \
     printer-driver-all \
     cups-ipp-utils \
@@ -44,14 +46,14 @@ PKGS_TO_INSTALL="
     lightdm \
     xserver-xorg-video-fbdev \
     xserver-xorg-input-evdev \
-    iceweasel \
+    firefox-esr \
     xdotool \
     unclutter \
     x11-utils \
     openbox \
     rpi-update \
     adduser \
-    postgresql \
+    libpq-dev \
     python-cups \
     python3 \
     python3-pyscard \
@@ -94,11 +96,6 @@ echo "Acquire::Retries "16";" > /etc/apt/apt.conf.d/99acquire-retries
 # KEEP OWN CONFIG FILES DURING PACKAGE CONFIGURATION
 # http://serverfault.com/questions/259226/automatically-keep-current-version-of-config-files-when-apt-get-install
 apt-get -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install ${PKGS_TO_INSTALL}
-pg_lsclusters
-systemctl start postgresql@9.6-main
-systemctl status postgresql@9.6-main
-
-sudo -u postgres createuser -s pi
 
 apt-get clean
 localepurge
@@ -114,10 +111,15 @@ PIP_TO_INSTALL="
     evdev \
     gatt \
     v4l2 \
+    polib \
     pycups"
 
 pip3 install ${PIP_TO_INSTALL}
 
+# Dowload MPD server and library for Six terminals
+wget 'https://nightly.odoo.com/master/iotbox/eftdvs' -P /usr/local/bin/
+chmod +x /usr/local/bin/eftdvs
+wget 'https://nightly.odoo.com/master/iotbox/eftapi.so' -P /usr/lib/
 
 groupadd usbusers
 usermod -a -G usbusers pi
@@ -138,6 +140,7 @@ echo "* * * * * rm /var/run/odoo/sessions/*" | crontab -
 update-rc.d -f hostapd remove
 update-rc.d -f nginx remove
 update-rc.d -f dnsmasq remove
+update-rc.d timesyncd defaults
 
 systemctl daemon-reload
 systemctl enable ramdisks.service
@@ -156,9 +159,10 @@ else
 fi
 if [ $SYSTEMD -eq 1 ]; then
     systemctl set-default graphical.target
-    ln -fs /etc/systemd/system/autologin@.service /etc/systemd/system/getty.target.wants/getty@tty1.service
-    rm /etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service
-    rm /etc/systemd/system/hostapd.service
+    systemctl disable getty@tty1.service
+    systemctl enable autologin@.service
+    systemctl disable systemd-timesyncd.service
+    systemctl disable hostapd.service
 else
     update-rc.d lightdm enable 2
 fi
@@ -175,8 +179,6 @@ echo "disable_overscan=1" >> /boot/config.txt
 setupcon
 
 # exclude /drivers folder from git info to be able to load specific drivers
-mkdir /home/pi/odoo/addons/hw_drivers/drivers/
-chmod 777 /home/pi/odoo/addons/hw_drivers/drivers/
 echo "addons/hw_drivers/drivers/" > /home/pi/odoo/.git/info/exclude
 
 # create dirs for ramdisks

@@ -1,6 +1,8 @@
 odoo.define('web.signature_field_tests', function (require) {
 "use strict";
 
+var ajax = require('web.ajax');
+var core = require('web.core');
 var FormView = require('web.FormView');
 var testUtils = require('web.test_utils');
 
@@ -37,7 +39,11 @@ QUnit.module('signature', {
     }
 }, function () {
 
-    QUnit.module('Signature Field');
+    QUnit.module('Signature Field', {
+        before: function () {
+            return ajax.loadXML('/web/static/src/xml/name_and_signature.xml', core.qweb);
+        },
+    });
 
     QUnit.test('Set simple field in "full_name" node option', async function (assert) {
         assert.expect(3);

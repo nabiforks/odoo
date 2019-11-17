@@ -3,17 +3,20 @@
 # * l10n_multilang
 # 
 # Translators:
-# Martin Trigaux, 2018
-# Vitor Fernandes <vmlf01@gmail.com>, 2018
-# MS, 2018
-# Nuno Silva <nuno.silva@arxi.pt>, 2018
+# Pedro Filipe <pedro2.10@hotmail.com>, 2019
+# Martin Trigaux, 2019
+# Vitor Fernandes <vmlf01@gmail.com>, 2019
+# Manuela Silva <manuelarodsilva@gmail.com>, 2019
+# Pedro Castro Silva <pedrocs@exo.pt>, 2019
+# Nuno Silva <nuno.silva@arxi.pt>, 2019
+# 
 msgid ""
 msgstr ""
 "Project-Id-Version: Odoo Server 12.0\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2018-10-08 14:33+0000\n"
-"PO-Revision-Date: 2018-10-08 14:33+0000\n"
-"Last-Translator: Nuno Silva <nuno.silva@arxi.pt>, 2018\n"
+"PO-Revision-Date: 2019-08-26 09:11+0000\n"
+"Last-Translator: Nuno Silva <nuno.silva@arxi.pt>, 2019\n"
 "Language-Team: Portuguese (https://www.transifex.com/odoo/teams/41243/pt/)\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -29,7 +32,7 @@ msgstr "Conta"
 #. module: l10n_multilang
 #: model:ir.model,name:l10n_multilang.model_account_chart_template
 msgid "Account Chart Template"
-msgstr ""
+msgstr "Modelo de Plano de Contas"
 
 #. module: l10n_multilang
 #: model:ir.model,name:l10n_multilang.model_account_account_tag
@@ -41,7 +44,8 @@ msgstr "Etiqueta de Conta"
 msgid ""
 "Administrative divisions of a country. E.g. Fed. State, Departement, Canton"
 msgstr ""
-"Divisões administrativas de um país. Exemplos: Distrito, Concelho, Freguesia"
+"Divisões administrativas de um país. Exemplos: Estado Federal, Província, "
+"Distrito, Cantão"
 
 #. module: l10n_multilang
 #: model:ir.model,name:l10n_multilang.model_account_analytic_account
@@ -57,7 +61,7 @@ msgstr "Estado do País"
 #. module: l10n_multilang
 #: model:ir.model.fields,field_description:l10n_multilang.field_account_tax_template__description
 msgid "Display on Invoices"
-msgstr "Exibir nas Faturas"
+msgstr "Mostrar nas Faturas"
 
 #. module: l10n_multilang
 #: model:ir.model,name:l10n_multilang.model_account_fiscal_position
@@ -68,7 +72,7 @@ msgstr "Posição Fiscal"
 #. module: l10n_multilang
 #: model:ir.model.fields,field_description:l10n_multilang.field_account_fiscal_position_template__name
 msgid "Fiscal Position Template"
-msgstr "Modelo de Situação Fiscal"
+msgstr "Modelo da Posição Fiscal"
 
 #. module: l10n_multilang
 #: model:ir.model,name:l10n_multilang.model_base_language_install
@@ -88,12 +92,12 @@ msgstr "Nome do Diário"
 #. module: l10n_multilang
 #: model:ir.model.fields,field_description:l10n_multilang.field_account_tax__description
 msgid "Label on Invoices"
-msgstr "Etiqueta nas Faturas"
+msgstr "Rótulo nas Faturas"
 
 #. module: l10n_multilang
 #: model:ir.model.fields,help:l10n_multilang.field_account_fiscal_position__note
 msgid "Legal mentions that have to be printed on the invoices."
-msgstr "Menções legais que têm que ser impressas nas faturas."
+msgstr "Menções legais que têm de ser impressas nas faturas."
 
 #. module: l10n_multilang
 #: model:ir.model.fields,field_description:l10n_multilang.field_account_account__name
@@ -141,7 +145,7 @@ msgstr "Imposto"
 #: model:ir.model.fields,field_description:l10n_multilang.field_account_tax__name
 #: model:ir.model.fields,field_description:l10n_multilang.field_account_tax_template__name
 msgid "Tax Name"
-msgstr "Nome do Imposto"
+msgstr "Nome do Impostos"
 
 #. module: l10n_multilang
 #: model:ir.model,name:l10n_multilang.model_account_fiscal_position_template

@@ -6,7 +6,6 @@ from datetime import datetime
 from dateutil import relativedelta
 
 from odoo import api, fields, models, _
-from odoo.addons import decimal_precision as dp
 from odoo.exceptions import UserError, ValidationError
 from odoo.tools import DEFAULT_SERVER_DATETIME_FORMAT
 from odoo.osv import expression
@@ -19,23 +18,32 @@ _logger = logging.getLogger(__name__)
 class Warehouse(models.Model):
     _name = "stock.warehouse"
     _description = "Warehouse"
+    _order = 'sequence,id'
+    _check_company_auto = True
     # namedtuple used in helper methods generating values for routes
     Routing = namedtuple('Routing', ['from_loc', 'dest_loc', 'picking_type', 'action'])
 
-    name = fields.Char('Warehouse', index=True, required=True, default=lambda self: self.env.company_id.name)
+    name = fields.Char('Warehouse', index=True, required=True, default=lambda self: self.env.company.name)
     active = fields.Boolean('Active', default=True)
     company_id = fields.Many2one(
-        'res.company', 'Company', default=lambda self: self.env.company_id,
+        'res.company', 'Company', default=lambda self: self.env.company,
         index=True, readonly=True, required=True,
         help='The company is automatically set from your user preferences.')
-    partner_id = fields.Many2one('res.partner', 'Address')
-    view_location_id = fields.Many2one('stock.location', 'View Location', domain=[('usage', '=', 'view')], required=True)
-    lot_stock_id = fields.Many2one('stock.location', 'Location Stock', domain=[('usage', '=', 'internal')], required=True)
+    partner_id = fields.Many2one('res.partner', 'Address', default=lambda self: self.env.company.partner_id, check_company=True)
+    view_location_id = fields.Many2one(
+        'stock.location', 'View Location',
+        domain="[('usage', '=', 'view'), ('company_id', '=', company_id)]",
+        required=True, check_company=True)
+    lot_stock_id = fields.Many2one(
+        'stock.location', 'Location Stock',
+        domain="[('usage', '=', 'internal'), ('company_id', '=', company_id)]",
+        required=True, check_company=True)
     code = fields.Char('Short Name', required=True, size=5, help="Short name used to identify your warehouse")
     route_ids = fields.Many2many(
         'stock.location.route', 'stock_route_warehouse', 'warehouse_id', 'route_id',
-        'Routes', domain="[('warehouse_selectable', '=', True)]",
-        help='Defaults routes through the warehouse')
+        'Routes',
+        domain="[('warehouse_selectable', '=', True), '|', ('company_id', '=', False), ('company_id', '=', company_id)]",
+        help='Defaults routes through the warehouse', check_company=True)
     reception_steps = fields.Selection([
         ('one_step', 'Receive goods directly (1 step)'),
         ('two_steps', 'Receive goods in input and then stock (2 steps)'),
@@ -48,16 +56,16 @@ class Warehouse(models.Model):
         ('pick_pack_ship', 'Pack goods, send goods in output and then deliver (3 steps)')],
         'Outgoing Shipments', default='ship_only', required=True,
         help="Default outgoing route to follow")
-    wh_input_stock_loc_id = fields.Many2one('stock.location', 'Input Location')
-    wh_qc_stock_loc_id = fields.Many2one('stock.location', 'Quality Control Location')
-    wh_output_stock_loc_id = fields.Many2one('stock.location', 'Output Location')
-    wh_pack_stock_loc_id = fields.Many2one('stock.location', 'Packing Location')
+    wh_input_stock_loc_id = fields.Many2one('stock.location', 'Input Location', check_company=True)
+    wh_qc_stock_loc_id = fields.Many2one('stock.location', 'Quality Control Location', check_company=True)
+    wh_output_stock_loc_id = fields.Many2one('stock.location', 'Output Location', check_company=True)
+    wh_pack_stock_loc_id = fields.Many2one('stock.location', 'Packing Location', check_company=True)
     mto_pull_id = fields.Many2one('stock.rule', 'MTO rule')
-    pick_type_id = fields.Many2one('stock.picking.type', 'Pick Type')
-    pack_type_id = fields.Many2one('stock.picking.type', 'Pack Type')
-    out_type_id = fields.Many2one('stock.picking.type', 'Out Type')
-    in_type_id = fields.Many2one('stock.picking.type', 'In Type')
-    int_type_id = fields.Many2one('stock.picking.type', 'Internal Type')
+    pick_type_id = fields.Many2one('stock.picking.type', 'Pick Type', check_company=True)
+    pack_type_id = fields.Many2one('stock.picking.type', 'Pack Type', check_company=True)
+    out_type_id = fields.Many2one('stock.picking.type', 'Out Type', check_company=True)
+    in_type_id = fields.Many2one('stock.picking.type', 'In Type', check_company=True)
+    int_type_id = fields.Many2one('stock.picking.type', 'Internal Type', check_company=True)
     crossdock_route_id = fields.Many2one('stock.location.route', 'Crossdock Route', ondelete='restrict')
     reception_route_id = fields.Many2one('stock.location.route', 'Receipt Route', ondelete='restrict')
     delivery_route_id = fields.Many2one('stock.location.route', 'Delivery Route', ondelete='restrict')
@@ -69,6 +77,8 @@ class Warehouse(models.Model):
         'stock.location.route', 'supplied_wh_id', 'Resupply Routes',
         help="Routes will be created for these resupply warehouses and you can select them on products and product categories")
     show_resupply = fields.Boolean(compute="_compute_show_resupply")
+    sequence = fields.Integer(default=10,
+        help="Gives the sequence of this line when displaying the warehouses.")
     _sql_constraints = [
         ('warehouse_name_uniq', 'unique(name, company_id)', 'The name of the warehouse must be unique per company!'),
         ('warehouse_code_uniq', 'unique(code, company_id)', 'The code of the warehouse must be unique per company!'),
@@ -120,6 +130,11 @@ class Warehouse(models.Model):
         return warehouse
 
     def write(self, vals):
+        if 'company_id' in vals:
+            for warehouse in self:
+                if warehouse.company_id.id != vals['company_id']:
+                    raise UserError(_("Changing the company of this record is forbidden at this point, you should rather archive it and create a new one."))
+
         Route = self.env['stock.location.route']
         warehouses = self.with_context(active_test=False)
 
@@ -241,7 +256,7 @@ class Warehouse(models.Model):
             transit_loc = ResCompany.browse(company_id).internal_transit_location_id.id
             self.env['res.partner'].browse(partner_id).with_context(force_company=company_id).write({'property_stock_customer': transit_loc, 'property_stock_supplier': transit_loc})
         else:
-            transit_loc = self.env.company_id.internal_transit_location_id.id
+            transit_loc = self.env.company.internal_transit_location_id.id
             self.env['res.partner'].browse(partner_id).write({'property_stock_customer': transit_loc, 'property_stock_supplier': transit_loc})
 
     def _create_or_update_sequences_and_picking_types(self):
@@ -338,7 +353,7 @@ class Warehouse(models.Model):
                     'company_id': self.company_id.id,
                     'action': 'pull',
                     'auto': 'manual',
-                    'propagate': True,
+                    'delay_alert': True,
                     'route_id': self._find_global_route('stock.route_warehouse0_mto', _('Make To Order')).id
                 },
                 'update_values': {
@@ -434,7 +449,8 @@ class Warehouse(models.Model):
                 },
                 'rules_values': {
                     'active': True,
-                    'procure_method': 'make_to_order'
+                    'procure_method': 'make_to_order',
+                    'propagate_cancel': True,
                 }
             },
             'delivery_route_id': {
@@ -499,7 +515,7 @@ class Warehouse(models.Model):
         delivery_steps = vals.get('delivery_steps', def_values['delivery_steps'])
         code = vals.get('code') or code
         code = code.replace(' ', '').upper()
-        company_id = vals.get('company_id', self.company_id.id)
+        company_id = vals.get('company_id', self.default_get(['company_id'])['company_id'])
         sub_locations = {
             'lot_stock_id': {
                 'name': _('Stock'),
@@ -548,12 +564,13 @@ class Warehouse(models.Model):
         avoid mistakes during picking types and rules creation.
         """
         for warehouse in self:
-            sub_locations = warehouse._get_locations_values(vals, warehouse.code)
+            company_id = vals.get('company_id', warehouse.company_id.id)
+            sub_locations = warehouse._get_locations_values(dict(vals, company_id=company_id), warehouse.code)
             missing_location = {}
             for location, location_values in sub_locations.items():
                 if not warehouse[location] and location not in vals:
                     location_values['location_id'] = vals.get('view_location_id', warehouse.view_location_id.id)
-                    location_values['company_id'] = vals.get('company_id', warehouse.company_id.id)
+                    location_values['company_id'] = company_id
                     missing_location[location] = self.env['stock.location'].create(location_values).id
             if missing_location:
                 warehouse.write(missing_location)
@@ -675,11 +692,22 @@ class Warehouse(models.Model):
                 'procure_method': first_rule and 'make_to_stock' or 'make_to_order',
                 'warehouse_id': self.id,
                 'company_id': self.company_id.id,
-                'propagate': routing.picking_type != self.pick_type_id,
+                'delay_alert': routing.picking_type.code == 'outgoing',
             }
             route_rule_values.update(values or {})
             rules_list.append(route_rule_values)
             first_rule = False
+        if values and values.get('propagate_cancel') and rules_list:
+            # In case of rules chain with cancel propagation set, we need to stop
+            # the cancellation for the last step in order to avoid cancelling
+            # any other move after the chain.
+            # Example: In the following flow:
+            # Input -> Quality check -> Stock -> Customer
+            # We want that cancelling I->GC cancel QC -> S but not S -> C
+            # which means:
+            # Input -> Quality check should have propagate_cancel = True
+            # Quality check -> Stock should have propagate_cancel = False
+            rules_list[-1]['propagate_cancel'] = False
         return rules_list
 
     def _get_supply_pull_rules_values(self, route_values, values=None):
@@ -713,7 +741,10 @@ class Warehouse(models.Model):
         if not change_to_multiple:
             # If single delivery we should create the necessary MTO rules for the resupply
             routings = [self.Routing(self.lot_stock_id, location, self.out_type_id, 'pull') for location in rules.mapped('location_id')]
-            mto_rule_vals = self._get_rule_values(routings)
+            mto_vals = self._get_global_route_rules_values().get('mto_pull_id')
+            values = mto_vals['create_values']
+            mto_rule_vals = self._get_rule_values(routings, values, name_suffix='MTO')
+
             for mto_rule_val in mto_rule_vals:
                 Rule.create(mto_rule_val)
         else:
@@ -809,6 +840,9 @@ class Warehouse(models.Model):
                 'default_location_src_id': False,
                 'sequence': max_sequence + 1,
                 'barcode': self.code.replace(" ", "").upper() + "-RECEIPTS",
+                'show_reserved': False,
+                'sequence_code': 'IN',
+                'company_id': self.company_id.id,
             }, 'out_type_id': {
                 'name': _('Delivery Orders'),
                 'code': 'outgoing',
@@ -817,6 +851,8 @@ class Warehouse(models.Model):
                 'default_location_dest_id': False,
                 'sequence': max_sequence + 5,
                 'barcode': self.code.replace(" ", "").upper() + "-DELIVERY",
+                'sequence_code': 'OUT',
+                'company_id': self.company_id.id,
             }, 'pack_type_id': {
                 'name': _('Pack'),
                 'code': 'internal',
@@ -826,6 +862,8 @@ class Warehouse(models.Model):
                 'default_location_dest_id': output_loc.id,
                 'sequence': max_sequence + 4,
                 'barcode': self.code.replace(" ", "").upper() + "-PACK",
+                'sequence_code': 'PACK',
+                'company_id': self.company_id.id,
             }, 'pick_type_id': {
                 'name': _('Pick'),
                 'code': 'internal',
@@ -834,6 +872,8 @@ class Warehouse(models.Model):
                 'default_location_src_id': self.lot_stock_id.id,
                 'sequence': max_sequence + 3,
                 'barcode': self.code.replace(" ", "").upper() + "-PICK",
+                'sequence_code': 'PICK',
+                'company_id': self.company_id.id,
             }, 'int_type_id': {
                 'name': _('Internal Transfers'),
                 'code': 'internal',
@@ -844,6 +884,8 @@ class Warehouse(models.Model):
                 'active': self.reception_steps != 'one_step' or self.delivery_steps != 'ship_only' or self.user_has_groups('stock.group_stock_multi_locations'),
                 'sequence': max_sequence + 2,
                 'barcode': self.code.replace(" ", "").upper() + "-INTERNAL",
+                'sequence_code': 'INT',
+                'company_id': self.company_id.id,
             },
         }, max_sequence + 6
 
@@ -894,7 +936,6 @@ class Warehouse(models.Model):
 
     @api.returns('self')
     def _get_all_routes(self):
-        # TDE FIXME: check overrides
         routes = self.mapped('route_ids') | self.mapped('mto_pull_id').mapped('route_id')
         routes |= self.env["stock.location.route"].search([('supplied_wh_id', 'in', self.ids)])
         return routes
@@ -909,8 +950,8 @@ class Warehouse(models.Model):
             'type': 'ir.actions.act_window',
             'view_id': False,
             'view_mode': 'tree,form',
-            'view_type': 'form',
-            'limit': 20
+            'limit': 20,
+            'context': dict(self._context, default_warehouse_selectable=True, default_warehouse_ids=self.ids)
         }
 
 
@@ -918,6 +959,7 @@ class Orderpoint(models.Model):
     """ Defines Minimum stock rules. """
     _name = "stock.warehouse.orderpoint"
     _description = "Minimum Inventory Rule"
+    _check_company_auto = True
 
     @api.model
     def default_get(self, fields):
@@ -931,47 +973,48 @@ class Orderpoint(models.Model):
         return res
 
     name = fields.Char(
-        'Name', copy=False, required=True,
+        'Name', copy=False, required=True, readonly=True,
         default=lambda self: self.env['ir.sequence'].next_by_code('stock.orderpoint'))
     active = fields.Boolean(
         'Active', default=True,
         help="If the active field is set to False, it will allow you to hide the orderpoint without removing it.")
     warehouse_id = fields.Many2one(
         'stock.warehouse', 'Warehouse',
-        ondelete="cascade", required=True)
+        check_company=True, ondelete="cascade", required=True)
     location_id = fields.Many2one(
         'stock.location', 'Location',
-        ondelete="cascade", required=True)
+        ondelete="cascade", required=True, check_company=True)
     product_id = fields.Many2one(
         'product.product', 'Product',
-        domain=[('type', '=', 'product')], ondelete='cascade', required=True)
+        domain="[('type', '=', 'product'), '|', ('company_id', '=', False), ('company_id', '=', company_id)]", ondelete='cascade', required=True, check_company=True)
     product_uom = fields.Many2one(
-        'uom.uom', 'Product Unit of Measure', related='product_id.uom_id',
+        'uom.uom', 'Unit of Measure', related='product_id.uom_id',
         readonly=True, required=True,
         default=lambda self: self._context.get('product_uom', False))
+    product_uom_name = fields.Char(string='Product unit of measure label', related='product_uom.display_name', readonly=True)
     product_min_qty = fields.Float(
-        'Minimum Quantity', digits=dp.get_precision('Product Unit of Measure'), required=True,
-        help="When the virtual stock goes below the Min Quantity specified for this field, Odoo generates "
+        'Minimum Quantity', digits='Product Unit of Measure', required=True,
+        help="When the virtual stock equals to or goes below the Min Quantity specified for this field, Odoo generates "
              "a procurement to bring the forecasted quantity to the Max Quantity.")
     product_max_qty = fields.Float(
-        'Maximum Quantity', digits=dp.get_precision('Product Unit of Measure'), required=True,
+        'Maximum Quantity', digits='Product Unit of Measure', required=True,
         help="When the virtual stock goes below the Min Quantity, Odoo generates "
              "a procurement to bring the forecasted quantity to the Quantity specified as Max Quantity.")
     qty_multiple = fields.Float(
-        'Qty Multiple', digits=dp.get_precision('Product Unit of Measure'),
+        'Qty Multiple', digits='Product Unit of Measure',
         default=1, required=True,
         help="The procurement quantity will be rounded up to this multiple.  If it is 0, the exact quantity will be used.")
     group_id = fields.Many2one(
         'procurement.group', 'Procurement Group', copy=False,
         help="Moves created through this orderpoint will be put in this procurement group. If none is given, the moves generated by stock rules will be grouped into one big picking.")
     company_id = fields.Many2one(
-        'res.company', 'Company', required=True,
-        default=lambda self: self.env.company_id)
+        'res.company', 'Company', required=True, index=True,
+        default=lambda self: self.env.company)
     lead_days = fields.Integer(
         'Lead Time', default=1,
         help="Number of days after the orderpoint is triggered to receive the products or to order to the vendor")
     lead_type = fields.Selection(
-        [('net', 'Day(s) to get the products'), ('supplier', 'Day(s) to purchase')], 'Lead Type',
+        [('net', 'Days to get the products'), ('supplier', 'Days to purchase')], 'Lead Type',
         required=True, default='supplier')
     allowed_location_ids = fields.One2many(comodel_name='stock.location', compute='_compute_allowed_location_ids')
 
@@ -985,10 +1028,12 @@ class Orderpoint(models.Model):
         # We want to keep only the locations
         #  - strictly belonging to our warehouse
         #  - not belonging to any warehouses
-        other_warehouses = self.env['stock.warehouse'].search([('id', '!=', self.warehouse_id.id)])
-        for view_location_id in other_warehouses.mapped('view_location_id'):
-            loc_domain = expression.AND([loc_domain, ['!', ('id', 'child_of', view_location_id.id)]])
-        self.allowed_location_ids = self.env['stock.location'].search(loc_domain)
+        for orderpoint in self:
+            other_warehouses = self.env['stock.warehouse'].search([('id', '!=', orderpoint.warehouse_id.id)])
+            for view_location_id in other_warehouses.mapped('view_location_id'):
+                loc_domain = expression.AND([loc_domain, ['!', ('id', 'child_of', view_location_id.id)]])
+                loc_domain = expression.AND([loc_domain, ['|', ('company_id', '=', False), ('company_id', '=', orderpoint.company_id.id)]])
+            orderpoint.allowed_location_ids = self.env['stock.location'].search(loc_domain)
 
     def _quantity_in_progress(self):
         """Return Quantities that are not yet in virtual stock but should be deduced from orderpoint rule
@@ -1008,11 +1053,25 @@ class Orderpoint(models.Model):
             self.location_id = self.warehouse_id.lot_stock_id.id
 
     @api.onchange('product_id')
-    def onchange_product_id(self):
+    def _onchange_product_id(self):
         if self.product_id:
             self.product_uom = self.product_id.uom_id.id
             return {'domain':  {'product_uom': [('category_id', '=', self.product_id.uom_id.category_id.id)]}}
         return {'domain': {'product_uom': []}}
+
+    @api.onchange('company_id')
+    def _onchange_company_id(self):
+        if self.company_id:
+            self.warehouse_id = self.env['stock.warehouse'].search([
+                ('company_id', '=', self.company_id.id)
+            ], limit=1)
+
+    def write(self, vals):
+        if 'company_id' in vals:
+            for orderpoint in self:
+                if orderpoint.company_id.id != vals['company_id']:
+                    raise UserError(_("Changing the company of this record is forbidden at this point, you should rather archive it and create a new one."))
+        return super(Orderpoint, self).write(vals)
 
     def _get_date_planned(self, product_qty, start_date):
         days = self.lead_days or 0.0
@@ -1036,3 +1095,4 @@ class Orderpoint(models.Model):
             'orderpoint_id': self,
             'group_id': group or self.group_id,
         }
+

@@ -35,7 +35,8 @@ class TestStockLandedCostsCommon(AccountingTestCase):
             'code': "X1101",
             'user_type_id': self.env['account.account.type'].create({
                     'name': 'Expenses',
-                    'type': 'other'}).id,
+                    'type': 'other',
+                    'internal_group': 'liability'}).id,
             'reconcile': True})
         self.expenses_journal = self.env['account.journal'].create({
             'name': 'Expenses - Test',
@@ -71,5 +72,4 @@ class TestStockLandedCostsCommon(AccountingTestCase):
     def _create_services(self, name):
         return self.Product.create({
             'name': name,
-            'landed_cost_ok': True,
             'type': 'service'})

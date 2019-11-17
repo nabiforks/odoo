@@ -52,6 +52,7 @@ class Image(models.AbstractModel):
             filename = options['filename']
         else:
             filename = record.display_name
+        filename = filename.replace('/', '-').replace('\\', '-')
 
         src = '/web/image/%s/%s/%s%s/%s?unique=%s' % (record._name, record.id, options.get('preview_image', field_name), max_size, url_quote(filename), sha)
 
@@ -68,8 +69,13 @@ class Image(models.AbstractModel):
         elif options.get('zoom'):
             src_zoom = options['zoom']
 
+        itemprop = None
+        if options.get('itemprop'):
+            itemprop = options['itemprop']
+
         atts = OrderedDict()
         atts["src"] = src
+        atts["itemprop"] = itemprop
         atts["class"] = classes
         atts["style"] = options.get('style')
         atts["alt"] = alt

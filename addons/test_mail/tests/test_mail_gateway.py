@@ -1,18 +1,21 @@
 # -*- coding: utf-8 -*-
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 
+import email
 import socket
 
 from email.utils import formataddr
+from unittest.mock import DEFAULT
+from unittest.mock import patch
 
+from odoo import exceptions
 from odoo.addons.test_mail.data import test_mail_data
 from odoo.addons.test_mail.data.test_mail_data import MAIL_TEMPLATE
+from odoo.addons.test_mail.models.test_mail_models import MailTestGateway
 from odoo.addons.test_mail.tests.common import BaseFunctionalTest, MockEmails
 from odoo.addons.test_mail.tests.common import mail_new_test_user
-from odoo.tools import mute_logger
-
-
 from odoo.tests import tagged
+from odoo.tools import email_split_and_format, mute_logger, pycompat
 
 
 @tagged('mail_gateway')
@@ -21,16 +24,16 @@ class TestEmailParsing(BaseFunctionalTest, MockEmails):
     def test_message_parse_body(self):
         # test pure plaintext
         plaintext = self.format(test_mail_data.MAIL_TEMPLATE_PLAINTEXT, email_from='Sylvie Lelitre <test.sylvie.lelitre@agrolait.com>')
-        res = self.env['mail.thread'].message_parse(plaintext)
+        res = self.env['mail.thread'].message_parse(email.message_from_string(pycompat.to_text(plaintext)))
         self.assertIn('Please call me as soon as possible this afternoon!', res['body'])
 
         # test multipart / text and html -> html has priority
         multipart = self.format(MAIL_TEMPLATE, email_from='Sylvie Lelitre <test.sylvie.lelitre@agrolait.com>')
-        res = self.env['mail.thread'].message_parse(multipart)
+        res = self.env['mail.thread'].message_parse(email.message_from_string(pycompat.to_text(multipart)))
         self.assertIn('<p>Please call me as soon as possible this afternoon!</p>', res['body'])
 
         # test multipart / mixed
-        res = self.env['mail.thread'].message_parse(test_mail_data.MAIL_MULTIPART_MIXED)
+        res = self.env['mail.thread'].message_parse(email.message_from_string(pycompat.to_text(test_mail_data.MAIL_MULTIPART_MIXED)))
         self.assertNotIn(
             'Should create a multipart/mixed: from gmail, *bold*, with attachment', res['body'],
             'message_parse: text version should not be in body after parsing multipart/mixed')
@@ -38,7 +41,7 @@ class TestEmailParsing(BaseFunctionalTest, MockEmails):
             '<div dir="ltr">Should create a multipart/mixed: from gmail, <b>bold</b>, with attachment.<br clear="all"><div><br></div>', res['body'],
             'message_parse: html version should be in body after parsing multipart/mixed')
 
-        res = self.env['mail.thread'].message_parse(test_mail_data.MAIL_MULTIPART_MIXED_TWO)
+        res = self.env['mail.thread'].message_parse(email.message_from_string(pycompat.to_text(test_mail_data.MAIL_MULTIPART_MIXED_TWO)))
         self.assertNotIn('First and second part', res['body'],
                          'message_parse: text version should not be in body after parsing multipart/mixed')
         self.assertIn('First part', res['body'],
@@ -46,22 +49,32 @@ class TestEmailParsing(BaseFunctionalTest, MockEmails):
         self.assertIn('Second part', res['body'],
                       'message_parse: second part of the html version should be in body after parsing multipart/mixed')
 
-        res = self.env['mail.thread'].message_parse(test_mail_data.MAIL_SINGLE_BINARY)
+        res = self.env['mail.thread'].message_parse(email.message_from_string(pycompat.to_text(test_mail_data.MAIL_SINGLE_BINARY)))
         self.assertEqual(res['body'], '')
         self.assertEqual(res['attachments'][0][0], 'thetruth.pdf')
 
     def test_message_parse_eml(self):
         # Test that the parsing of mail with embedded emails as eml(msg) which generates empty attachments, can be processed.
-        self.env['mail.thread'].message_parse(self.format(test_mail_data.MAIL_EML_ATTACHMENT, email_from='Sylvie Lelitre <test.sylvie.lelitre@agrolait.com>', to='generic@test.com'))
+        mail = self.format(test_mail_data.MAIL_EML_ATTACHMENT, email_from='Sylvie Lelitre <test.sylvie.lelitre@agrolait.com>', to='generic@test.com')
+        self.env['mail.thread'].message_parse(email.message_from_string(pycompat.to_text(mail)))
 
     def test_message_parse_plaintext(self):
         """ Incoming email in plaintext should be stored as html """
-        res = self.env['mail.thread'].message_parse(self.format(test_mail_data.MAIL_TEMPLATE_PLAINTEXT, email_from='Sylvie Lelitre <test.sylvie.lelitre@agrolait.com>', to='generic@test.com'))
+        mail = self.format(test_mail_data.MAIL_TEMPLATE_PLAINTEXT, email_from='Sylvie Lelitre <test.sylvie.lelitre@agrolait.com>', to='generic@test.com')
+        res = self.env['mail.thread'].message_parse(email.message_from_string(pycompat.to_text(mail)))
         self.assertIn('<pre>\nPlease call me as soon as possible this afternoon!\n\n--\nSylvie\n</pre>', res['body'])
 
     def test_message_parse_xhtml(self):
         # Test that the parsing of XHTML mails does not fail
-        self.env['mail.thread'].message_parse(test_mail_data.MAIL_XHTML)
+        self.env['mail.thread'].message_parse(email.message_from_string(pycompat.to_text(test_mail_data.MAIL_XHTML)))
+
+
+@tagged('mail_gateway')
+class TestMailAlias(BaseFunctionalTest):
+
+    def test_alias_setup(self):
+        alias = self.env['mail.alias'].with_context(alias_model_name='mail.test').create({'alias_name': 'b4r+_#_R3wl$$'})
+        self.assertEqual(alias.alias_name, 'b4r+_-_r3wl-', 'Disallowed chars should be replaced by hyphens')
 
 
 @tagged('mail_gateway')
@@ -100,9 +113,7 @@ class TestMailgateway(BaseFunctionalTest, MockEmails):
             'message_id': '<123456-openerp-%s-mail.test.gateway@%s>' % (cls.test_record.id, socket.gethostname()),
         })
 
-        cls.env['ir.config_parameter'].set_param('mail.bounce.alias', 'bounce.test')
-        cls.env['ir.config_parameter'].set_param('mail.catchall.domain', 'test.com')
-        cls.env['ir.config_parameter'].set_param('mail.catchall.alias', 'catchall.test')
+        cls._init_mail_gateway()
 
     # --------------------------------------------------
     # Base low-level tests
@@ -175,7 +186,7 @@ class TestMailgateway(BaseFunctionalTest, MockEmails):
         self.assertEqual(len(self._mails), 0, 'No notification / bounce should be sent')
 
         # Email recognized if partner has a formatted email
-        self.partner_1.write({'email': {'Valid Lelitre <%s>' % self.partner_1.email}})
+        self.partner_1.write({'email': 'Valid Lelitre <%s>' % self.partner_1.email})
         record = self.format_and_process(MAIL_TEMPLATE, self.partner_1.email, 'groups@test.com', subject='Test2')
 
         self.assertEqual(record.message_ids[0].author_id, self.partner_1,
@@ -325,6 +336,72 @@ class TestMailgateway(BaseFunctionalTest, MockEmails):
         self.assertEmails(False, self.partner_1, email_from=self.email_from)
 
     # --------------------------------------------------
+    # Creator recognition
+    # --------------------------------------------------
+
+    @mute_logger('odoo.addons.mail.models.mail_thread')
+    def test_message_process_create_uid_crash(self):
+        def _employee_crash(*args, **kwargs):
+            """ If employee is test employee, consider he has no access on document """
+            recordset = args[0]
+            if recordset.env.uid == self.user_employee.id and not recordset.env.su:
+                if kwargs.get('raise_exception', True):
+                    raise exceptions.AccessError('Hop hop hop Ernest, please step back.')
+                return False
+            return DEFAULT
+
+        with patch.object(MailTestGateway, 'check_access_rights', autospec=True, side_effect=_employee_crash):
+            record = self.format_and_process(MAIL_TEMPLATE, self.user_employee.email_formatted, 'groups@test.com', subject='NoEmployeeAllowed')
+        self.assertEqual(record.create_uid, self.user_employee)
+        self.assertEqual(record.message_ids[0].subject, 'NoEmployeeAllowed')
+        self.assertEqual(record.message_ids[0].create_uid, self.user_employee)
+        self.assertEqual(record.message_ids[0].author_id, self.user_employee.partner_id)
+
+    @mute_logger('odoo.addons.mail.models.mail_thread')
+    def test_message_process_create_uid_email(self):
+        record = self.format_and_process(MAIL_TEMPLATE, self.user_employee.email_formatted, 'groups@test.com', subject='Email Found')
+        self.assertEqual(record.create_uid, self.user_employee)
+        self.assertEqual(record.message_ids[0].subject, 'Email Found')
+        self.assertEqual(record.message_ids[0].create_uid, self.user_employee)
+        self.assertEqual(record.message_ids[0].author_id, self.user_employee.partner_id)
+
+        record = self.format_and_process(MAIL_TEMPLATE, 'Another name <%s>' % self.user_employee.email, 'groups@test.com', subject='Email OtherName')
+        self.assertEqual(record.create_uid, self.user_employee)
+        self.assertEqual(record.message_ids[0].subject, 'Email OtherName')
+        self.assertEqual(record.message_ids[0].create_uid, self.user_employee)
+        self.assertEqual(record.message_ids[0].author_id, self.user_employee.partner_id)
+
+        record = self.format_and_process(MAIL_TEMPLATE, self.user_employee.email_normalized, 'groups@test.com', subject='Email SimpleEmail')
+        self.assertEqual(record.create_uid, self.user_employee)
+        self.assertEqual(record.message_ids[0].subject, 'Email SimpleEmail')
+        self.assertEqual(record.message_ids[0].create_uid, self.user_employee)
+        self.assertEqual(record.message_ids[0].author_id, self.user_employee.partner_id)
+
+    @mute_logger('odoo.addons.mail.models.mail_thread')
+    def test_message_process_create_uid_email_follower(self):
+        self.alias.write({
+            'alias_parent_model_id': self.test_model.id,
+            'alias_parent_thread_id': self.test_record.id,
+        })
+        follower_user = mail_new_test_user(self.env, login='better', groups='base.group_user', name='Ernest Follower', email=self.user_employee.email)
+        self.test_record.message_subscribe(follower_user.partner_id.ids)
+
+        record = self.format_and_process(MAIL_TEMPLATE, self.user_employee.email_formatted, 'groups@test.com', subject='FollowerWinner')
+        self.assertEqual(record.create_uid, follower_user)
+        self.assertEqual(record.message_ids[0].subject, 'FollowerWinner')
+        self.assertEqual(record.message_ids[0].create_uid, follower_user)
+        self.assertEqual(record.message_ids[0].author_id, follower_user.partner_id)
+
+        # name order win
+        self.test_record.message_unsubscribe(follower_user.partner_id.ids)
+        self.test_record.flush()
+        record = self.format_and_process(MAIL_TEMPLATE, self.user_employee.email_formatted, 'groups@test.com', subject='FirstFoundWinner')
+        self.assertEqual(record.create_uid, self.user_employee)
+        self.assertEqual(record.message_ids[0].subject, 'FirstFoundWinner')
+        self.assertEqual(record.message_ids[0].create_uid, self.user_employee)
+        self.assertEqual(record.message_ids[0].author_id, self.user_employee.partner_id)
+
+    # --------------------------------------------------
     # Email Management
     # --------------------------------------------------
 
@@ -343,42 +420,116 @@ class TestMailgateway(BaseFunctionalTest, MockEmails):
         self.assertEqual(self._mails[0].get('email_from'), formataddr(('MAILER-DAEMON', 'bounce.test@test.com')))
 
     @mute_logger('odoo.addons.mail.models.mail_thread')
-    def test_message_process_bounce(self):
-        """ Writing to bounce alias is considered as a bounce """
+    def test_message_process_bounce_alias(self):
+        """ Writing to bounce alias is considered as a bounce even if not multipart/report bounce structure """
         self.assertEqual(self.partner_1.message_bounce, 0)
+        self.assertEqual(self.test_record.message_bounce, 0)
+
+        bounced_mail_id = 4442
+        bounce_email_to = '%s+%s-%s-%s@%s' % ('bounce.test', bounced_mail_id, self.test_record._name, self.test_record.id, 'test.com')
+        record = self.format_and_process(MAIL_TEMPLATE, self.partner_1.email_formatted, bounce_email_to, subject='Undelivered Mail Returned to Sender')
+        self.assertFalse(record)
+        # No information found in bounce email -> not possible to do anything except avoiding email
+        self.assertEqual(self.partner_1.message_bounce, 0)
+        self.assertEqual(self.test_record.message_bounce, 0)
+
+    @mute_logger('odoo.addons.mail.models.mail_thread')
+    def test_message_process_bounce_from_mailer_demon(self):
+        """ MAILER_DAEMON emails are considered as bounce """
+        self.assertEqual(self.partner_1.message_bounce, 0)
+        self.assertEqual(self.test_record.message_bounce, 0)
+
+        record = self.format_and_process(MAIL_TEMPLATE, 'MAILER-DAEMON@example.com', 'groups@test.com', subject='Undelivered Mail Returned to Sender')
+        self.assertFalse(record)
+        # No information found in bounce email -> not possible to do anything except avoiding email
+        self.assertEqual(self.partner_1.message_bounce, 0)
+        self.assertEqual(self.test_record.message_bounce, 0)
+
+    @mute_logger('odoo.addons.mail.models.mail_thread')
+    def test_message_process_bounce_multipart_alias(self):
+        """ Multipart/report bounce correctly make related partner bounce """
+        self.assertEqual(self.partner_1.message_bounce, 0)
+        self.assertEqual(self.test_record.message_bounce, 0)
 
         bounced_mail_id = 4442
         bounce_email_to = '%s+%s-%s-%s@%s' % ('bounce.test', bounced_mail_id, self.test_record._name, self.test_record.id, 'test.com')
         record = self.format_and_process(test_mail_data.MAIL_BOUNCE, self.partner_1.email_formatted, bounce_email_to, subject='Undelivered Mail Returned to Sender')
         self.assertFalse(record)
-        # self.assertEqual(self.partner_1.message_bounce, 1)  # TDE FIXME: smart test crashing in current master
+        # Missing in reply to message_id -> cannot find original record
+        self.assertEqual(self.partner_1.message_bounce, 1)
+        self.assertEqual(self.test_record.message_bounce, 0)
 
     @mute_logger('odoo.addons.mail.models.mail_thread')
-    def test_message_process_bounce_whatever_from(self):
-        """ Writing to bounce alias is considered as a bounce """
+    def test_message_process_bounce_multipart_alias_reply(self):
+        """ Multipart/report bounce correctly make related partner and record found in bounce email bounce """
         self.assertEqual(self.partner_1.message_bounce, 0)
+        self.assertEqual(self.test_record.message_bounce, 0)
 
         bounced_mail_id = 4442
         bounce_email_to = '%s+%s-%s-%s@%s' % ('bounce.test', bounced_mail_id, self.test_record._name, self.test_record.id, 'test.com')
-        record = self.format_and_process(test_mail_data.MAIL_BOUNCE, 'Whatever <what@ever.com>', bounce_email_to, subject='Undelivered Mail Returned to Sender')
+        extra = self.fake_email.message_id
+        record = self.format_and_process(test_mail_data.MAIL_BOUNCE, self.partner_1.email_formatted, bounce_email_to, subject='Undelivered Mail Returned to Sender', extra=extra)
         self.assertFalse(record)
-        # self.assertEqual(self.partner_1.message_bounce, 1)  # TDE FIXME: smart test crashing in current master
+        self.assertEqual(self.partner_1.message_bounce, 1)
+        self.assertEqual(self.test_record.message_bounce, 1)
 
-    @mute_logger('odoo.addons.mail.models.mail_thread') 
-    def test_message_process_bounce_multipart_report(self):
-        """ Multipart/report emails should be considered as bounce """
+    @mute_logger('odoo.addons.mail.models.mail_thread')
+    def test_message_process_bounce_multipart_alias_whatever_from(self):
+        """ Multipart/report bounce correctly make related record found in bounce email bounce """
         self.assertEqual(self.partner_1.message_bounce, 0)
-        record = self.format_and_process(test_mail_data.MAIL_BOUNCE, 'Whatever <what@ever.com>', 'groups@test.com', subject='Undelivered Mail Returned to Sender')
-        self.assertFalse(record)
-        # self.assertEqual(self.partner_1.message_bounce, 1)  # TDE FIXME: smart test crashing in current master
+        self.assertEqual(self.test_record.message_bounce, 0)
 
-    @mute_logger('odoo.addons.mail.models.mail_thread') 
-    def test_message_process_bounce_mailer_demon(self):
-        """ Multipart/report emails should be considered as bounce """
-        self.assertEqual(self.partner_1.message_bounce, 0)
-        record = self.format_and_process(MAIL_TEMPLATE, 'MAILER-DAEMON@example.com', 'groups@test.com', subject='Undelivered Mail Returned to Sender')
+        bounced_mail_id = 4442
+        bounce_email_to = '%s+%s-%s-%s@%s' % ('bounce.test', bounced_mail_id, self.test_record._name, self.test_record.id, 'test.com')
+        extra = self.fake_email.message_id
+        record = self.format_and_process(test_mail_data.MAIL_BOUNCE, 'Whatever <what@ever.com>', bounce_email_to, subject='Undelivered Mail Returned to Sender', extra=extra)
         self.assertFalse(record)
-        # self.assertEqual(self.partner_1.message_bounce, 1)  # TDE FIXME: smart test crashing in current master
+        self.assertEqual(self.partner_1.message_bounce, 0)
+        self.assertEqual(self.test_record.message_bounce, 1)
+
+    @mute_logger('odoo.addons.mail.models.mail_thread')
+    def test_message_process_bounce_multipart_whatever_to_and_from(self):
+        """ Multipart/report bounce correctly make related record found in bounce email bounce """
+        self.assertEqual(self.partner_1.message_bounce, 0)
+        self.assertEqual(self.test_record.message_bounce, 0)
+
+        extra = self.fake_email.message_id
+        record = self.format_and_process(test_mail_data.MAIL_BOUNCE, 'Whatever <what@ever.com>', 'groups@test.com', subject='Undelivered Mail Returned to Sender', extra=extra)
+        self.assertFalse(record)
+        self.assertEqual(self.partner_1.message_bounce, 0)
+        self.assertEqual(self.test_record.message_bounce, 1)
+
+    @mute_logger('odoo.addons.mail.models.mail_thread')
+    def test_message_process_bounce_records_channel(self):
+        """ Test blacklist allow to multi-bounce and auto update of mail.channel """
+        self.other_record = self.env['mail.test.gateway'].create({
+            'email_from': 'Another name <%s>' % self.partner_1.email
+        })
+        self.yet_other_record = self.env['mail.test.gateway'].create({
+            'email_from': 'Yet Another name <%s>' % self.partner_1.email.upper()
+        })
+        self.test_channel = self.env['mail.channel'].create({
+            'name': 'Test',
+            'channel_last_seen_partner_ids': [(0, 0, {'partner_id': self.partner_1.id})],
+        })
+        self.fake_email.write({
+            'model': 'mail.channel',
+            'res_id': self.test_channel.id,
+        })
+        self.assertIn(self.partner_1, self.test_channel.channel_partner_ids)
+        self.assertEqual(self.partner_1.message_bounce, 0)
+        self.assertEqual(self.other_record.message_bounce, 0)
+        self.assertEqual(self.yet_other_record.message_bounce, 0)
+
+        extra = self.fake_email.message_id
+        for i in range(10):
+            record = self.format_and_process(test_mail_data.MAIL_BOUNCE, 'A third name <%s>' % self.partner_1.email, 'groups@test.com', subject='Undelivered Mail Returned to Sender', extra=extra)
+            self.assertFalse(record)
+        self.assertEqual(self.partner_1.message_bounce, 10)
+        self.assertEqual(self.test_record.message_bounce, 0)
+        self.assertEqual(self.other_record.message_bounce, 10)
+        self.assertEqual(self.yet_other_record.message_bounce, 10)
+        self.assertNotIn(self.partner_1, self.test_channel.channel_partner_ids)
 
     # --------------------------------------------------
     # Thread formation
@@ -482,7 +633,7 @@ class TestMailgateway(BaseFunctionalTest, MockEmails):
     @mute_logger('odoo.addons.mail.models.mail_thread', 'odoo.models', 'odoo.addons.mail.models.mail_mail')
     def test_message_process_reply_to_new_thread(self):
         """ Test replies not being considered as replies but use destination information instead (aka, mass post + specific reply to using aliases) """
-        first_record = self.env['mail.test.simple'].sudo(self.user_employee).create({'name': 'Replies to Record'})
+        first_record = self.env['mail.test.simple'].with_user(self.user_employee).create({'name': 'Replies to Record'})
         record_msg = first_record.message_post(
             subject='Discussion',
             no_auto_thread=False,
@@ -596,44 +747,45 @@ class TestMailgateway(BaseFunctionalTest, MockEmails):
         self.assertEqual(record.name, 'Spammy')
         self.assertEqual(record._name, 'mail.test.gateway')
 
-    @mute_logger('odoo.addons.mail.models.mail_thread', 'odoo.models', 'odoo.addons.mail.models.mail_mail')
-    def test_private_discussion(self):
-        """ Testing private discussion between partners. """
-        self.partner_2 = self.env['res.partner'].with_context(BaseFunctionalTest._test_context).create({
-            'name': 'Admin',
-            'email': 'admin@agrolait.com',
-        })
-        msg1_pids = [self.partner_1.id, self.partner_2.id]
 
-        # Do: Raoul writes to Bert and Administrator, with a model specific by parameter that should not be taken into account
-        msg1 = self.env['mail.thread'].sudo(self.user_employee).message_post(partner_ids=msg1_pids, subtype='mail.mt_comment', model='mail.test')
+class TestMailThreadCC(BaseFunctionalTest, MockEmails):
 
-        # Test: message recipients
-        msg = self.env['mail.message'].browse(msg1.id)
-        self.assertEqual(msg.partner_ids, self.partner_2 | self.partner_1,
-                         'message_post: private discussion: incorrect recipients')
-        self.assertEqual(msg.model, False,
-                         'message_post: private discussion: parameter model not correctly ignored when having no res_id')
-        # Test: message-id
-        self.assertIn('openerp-private', msg.message_id.split('@')[0], 'message_post: private discussion: message-id should contain the private keyword')
+    @classmethod
+    def setUpClass(cls):
+        super(TestMailThreadCC, cls).setUpClass()
 
-        # Do: Bert replies through mailgateway (is a customer)
-        self.format_and_process(MAIL_TEMPLATE, 'valid.lelitre@agrolait.com', 'not_important@mydomain.com', extra='In-Reply-To: %s' % msg.message_id)
+        cls.email_from = 'Sylvie Lelitre <test.sylvie.lelitre@agrolait.com>'
+        cls.alias = cls.env['mail.alias'].create({
+            'alias_name': 'cc_record',
+            'alias_user_id': False,
+            'alias_model_id': cls.env['ir.model']._get('mail.test.cc').id,
+            'alias_contact': 'everyone'})
 
-        # Test: last mail_message created
-        msg2 = self.env['mail.message'].search([], limit=1)
-        # Test: message recipients
-        self.assertEqual(msg2.author_id, self.partner_1,
-                         'message_post: private discussion: wrong author through mailgateway based on email')
-        self.assertEqual(msg2.partner_ids, self.user_employee.partner_id | self.partner_2,
-                         'message_post: private discussion: incorrect recipients when replying')
+        cls._init_mail_gateway()
 
-        # Do: Bert replies through chatter (is a customer)
-        msg3 = self.env['mail.thread'].message_post(author_id=self.partner_1.id, parent_id=msg1.id, subtype='mail.mt_comment')
+    @mute_logger('odoo.addons.mail.models.mail_thread')
+    def test_message_cc_new(self):
+        record = self.format_and_process(MAIL_TEMPLATE, self.email_from, 'cc_record@test.com',
+                                         cc='cc1@example.com, cc2@example.com', target_model='mail.test.cc')
+        cc = email_split_and_format(record.email_cc)
+        self.assertEqual(sorted(cc), ['cc1@example.com', 'cc2@example.com'])
 
-        # Test: message recipients
-        msg = self.env['mail.message'].browse(msg3.id)
-        self.assertEqual(msg.partner_ids, self.user_employee.partner_id | self.partner_2,
-                         'message_post: private discussion: incorrect recipients when replying')
-        self.assertEqual(msg.needaction_partner_ids, self.user_employee.partner_id | self.partner_2,
-                         'message_post: private discussion: incorrect notified recipients when replying')
+    @mute_logger('odoo.addons.mail.models.mail_thread')
+    def test_message_cc_update_with_old(self):
+        record = self.env['mail.test.cc'].create({'email_cc': 'cc1 <cc1@example.com>, cc2@example.com'})
+        self.alias.write({'alias_force_thread_id': record.id})
+
+        self.format_and_process(MAIL_TEMPLATE, self.email_from, 'cc_record@test.com',
+                                cc='cc2 <cc2@example.com>, cc3@example.com', target_model='mail.test.cc')
+        cc = email_split_and_format(record.email_cc)
+        self.assertEqual(sorted(cc), ['cc1 <cc1@example.com>', 'cc2@example.com', 'cc3@example.com'], 'new cc should have been added on record (unique)')
+
+    @mute_logger('odoo.addons.mail.models.mail_thread')
+    def test_message_cc_update_no_old(self):
+        record = self.env['mail.test.cc'].create({})
+        self.alias.write({'alias_force_thread_id': record.id})
+
+        self.format_and_process(MAIL_TEMPLATE, self.email_from, 'cc_record@test.com',
+                                cc='cc2 <cc2@example.com>, cc3@example.com', target_model='mail.test.cc')
+        cc = email_split_and_format(record.email_cc)
+        self.assertEqual(sorted(cc), ['cc2 <cc2@example.com>', 'cc3@example.com'], 'new cc should have been added on record (unique)')
